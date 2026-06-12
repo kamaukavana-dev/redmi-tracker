@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redmi Tracker Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        #map { height: 100vh; width: 100%; }
+        .info-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            min-width: 250px;
+        }
+        .info-panel h2 { font-size: 18px; margin-bottom: 10px; color: #333; }
+        .info-item { margin: 8px 0; font-size: 14px; }
+        .info-item label { font-weight: 600; color: #666; }
+        .battery-good { color: #22c55e; }
+        .battery-medium { color: #f59e0b; }
+        .battery-low { color: #ef4444; }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        .status-online { background: #22c55e; }
+        .status-offline { background: #ef4444; }
+        .refresh-timer {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            font-size: 12px;
+            color: #666;
+        }
+        .loading { opacity: 0.6; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="info-panel" id="infoPanel">
+        <h2>📍 Redmi Tracker</h2>
+        <div class="info-item">
+            <span class="status-indicator status-offline" id="statusIndicator"></span>
+            <span id="statusText">Connecting...</span>
+        </div>
+        <div class="info-item">
+            <label>Last Seen:</label>
+            <span id="lastSeen">--</span>
+        </div>
+        <div class="info-item">
+            <label>Battery:</label>
+            <div style="background: #e5e7eb; height: 10px; border-radius: 5px; overflow: hidden; margin-top: 5px;"><div id="batteryBar" style="height: 100%; width: 0%; transition: width 0.3s; background: #22c55e;"></div></div><span id="batteryLevel">--</span>
+        </div>
+        <div class="info-item">
+            <label>Position:</label>
+            <span id="position">--</span>
+        </div>
+        <div class="info-item">
+            <label>Active Geofences:</label>
+            <span id="geofenceCount">--</span>
+        </div>
+    </div>
+    <div class="refresh-timer">
+        Ping Count: <span id="pingCount">--</span> | Uptime: <span id="uptimeScore">--</span>% | Auto-refresh: <span id="countdown">30</span>s
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const API_BASE = '';
+        const API_KEY = localStorage.getItem('api_key') || prompt('Enter API Key:', 'your_api_key');
+        if (API_KEY) localStorage.setItem('api_key', API_KEY);
+
+        const HEADERS = { 'X-API-Key': API_KEY };
+
+        const map = L.map('map').setView([-1.2921, 36.8219], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        let markers = { current: null, history: [] };
+        let geofenceCircles = [];
+        let polyline = null;
+        let countdown = 30;
+
+        function getBatteryClass(level) {
+            if (level >= 70) return 'battery-good';
+            if (level >= 30) return 'battery-medium';
+            return 'battery-low';
+        }
+
+        function formatTime(isoString) {
+            if (!isoString) return '--';
+            const date = new Date(isoString);
+            return date.toLocaleString();
+        }
+
+        async function fetchLatest() {
+            try {
+                const response = await fetch(`${API_BASE}/location/latest`, { headers: HEADERS });
+                if (!response.ok) throw new Error('Failed to fetch');
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching latest:', error);
+                return null;
+            }
+        }
+
+        async function fetchHistory() {
+            try {
+                const response = await fetch(`${API_BASE}/location/history?limit=50`, { headers: HEADERS });
+                if (!response.ok) throw new Error('Failed to fetch');
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching history:', error);
+                return { data: [] };
+            }
+        }
+
+        async function fetchGeofences() {
+            try {
+                const response = await fetch(`${API_BASE}/geofence`, { headers: HEADERS });
+                if (!response.ok) throw new Error('Failed to fetch');
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching geofences:', error);
+                return [];
+            }
+        }
+
+        function updateMap(location) {
+            if (!location) return;
+
+            const latLng = [location.latitude, location.longitude];
+
+            if (markers.current) {
+                map.removeLayer(markers.current);
+            }
+
+            markers.current = L.marker(latLng, {icon: L.icon({iconUrl: 'https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png', shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]})}).addTo(map)
+                .bindPopup(`<b>Latest Position</b><br>Battery: ${location.battery || 'N/A'}%<br>${formatTime(location.recorded_at)}`)
+                .openPopup();
+
+            map.setView(latLng, 15);
+
+            document.getElementById('lastSeen').textContent = formatTime(location.recorded_at);
+            document.getElementById('batteryLevel').innerHTML = `<span class="${getBatteryClass(location.battery)}">${location.battery || 'N/A'}%</span>`;
+document.getElementById('batteryBar').style.width = `${location.battery || 0}%`;
+document.getElementById('batteryBar').style.background = location.battery >= 70 ? '#22c55e' : (location.battery >= 30 ? '#f59e0b' : '#ef4444');
+            document.getElementById('position').textContent = `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`;
+            document.getElementById('statusIndicator').className = 'status-indicator status-online';
+            document.getElementById('statusText').textContent = 'Online';
+        }
+
+        function drawHistory(historyData) {
+            markers.history.forEach(m => map.removeLayer(m));
+            markers.history = [];
+
+            if (polyline) {
+                map.removeLayer(polyline);
+            }
+
+            const points = historyData.data.map(loc => [loc.latitude, loc.longitude]);
+            if (points.length > 1) {
+                polyline = L.polyline(points, { color: '#3b82f6', weight: 3, opacity: 0.7 }).addTo(map);
+                map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+            }
+        }
+
+        function drawGeofences(geofences) {
+            geofenceCircles.forEach(c => map.removeLayer(c));
+            geofenceCircles = [];
+
+            geofences.forEach(fence => {
+                const circle = L.circle([fence.latitude, fence.longitude], {
+                    radius: fence.radius_meters,
+                    color: '#ef4444',
+                    fillColor: '#ef4444',
+                    fillOpacity: 0.2,
+                    weight: 2
+                }).addTo(map).bindPopup(`<b>${fence.name}</b><br>Radius: ${fence.radius_meters}m`);
+                geofenceCircles.push(circle);
+            });
+
+            document.getElementById('geofenceCount').textContent = geofences.length;
+        }
+
+        async function refreshData() {
+            document.getElementById('infoPanel').classList.add('loading');
+
+            const [latest, history, geofences, stats] = await Promise.all([
+fetchLatest(),
+fetchHistory(),
+fetchGeofences(),
+fetch(`${API_BASE}/stats`, {headers: HEADERS}).then(r=>r.json()).catch(()=>null)
+]); //
+                fetchLatest(),
+                fetchHistory(),
+                fetchGeofences()
+            ]);
+
+            if (latest) updateMap(latest);
+            if (history) drawHistory(history);
+            if (geofences) drawGeofences(geofences);
+if (stats) { document.getElementById('pingCount').textContent = stats.total_pings; document.getElementById('uptimeScore').textContent = stats.uptime_score_24h; }
+
+            document.getElementById('infoPanel').classList.remove('loading');
+        }
+
+        function startCountdown() {
+            const countdownEl = document.getElementById('countdown');
+            const interval = setInterval(() => {
+                countdown--;
+                countdownEl.textContent = countdown;
+                if (countdown <= 0) {
+                    countdown = 30;
+                    refreshData();
+                }
+            }, 1000);
+        }
+
+        refreshData();
+        startCountdown();
+    </script>
+</body>
+</html>
