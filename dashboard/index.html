@@ -3,143 +3,827 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GPS Tracker Dashboard</title>
+    <title>Redmi Tracker - GPS Dashboard</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         :root {
-            --bg-color: #0d1117;
+            --sidebar-bg: #f8f9fa;
             --sidebar-width: 300px;
-            --text-color: #e6edf3;
-            --border-color: #30363d;
-            --green: #238636;
-            --yellow: #d29922;
-            --red: #da3633;
+            --text-primary: #1a1a2e;
+            --text-secondary: #6c757d;
+            --border-color: #dee2e6;
+            --green: #28a745;
+            --yellow: #ffc107;
+            --red: #dc3545;
+            --blue: #007bff;
+            --shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: var(--text-color); height: 100vh; display: flex; }
-        #sidebar { width: var(--sidebar-width); background-color: var(--bg-color); border-right: 1px solid var(--border-color); padding: 20px; display: flex; flex-direction: column; gap: 20px; font-size: 0.9rem; z-index: 1000; overflow-y: auto; }
-        #map { flex-grow: 1; height: 100vh; z-index: 1; }
-        .sidebar-header { font-size: 1.2rem; font-weight: bold; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
-        .data-item { display: flex; flex-direction: column; gap: 5px; }
-        .data-label { color: #8b949e; font-size: 0.8rem; }
-        .data-value { font-family: 'Courier New', Courier, monospace; }
-        .battery-level { height: 10px; width: 100%; background: #30363d; border-radius: 5px; overflow: hidden; margin-top: 5px; }
-        .battery-fill { height: 100%; transition: width 0.3s; }
-        .geofence-list { list-style: none; padding-left: 0; }
-        .geofence-item { background: #161b22; padding: 8px; border-radius: 4px; margin-bottom: 5px; font-size: 0.85rem; }
-        /* Pulsing Marker Animation */
-        .pulse-marker { border-radius: 50%; background: #58a6ff; box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.7); animation: pulse 2s infinite; }
-        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(88, 166, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(88, 166, 255, 0); } }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            color: var(--text-primary);
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Sidebar */
+        #sidebar {
+            width: var(--sidebar-width);
+            background-color: var(--sidebar-bg);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+            transition: transform 0.3s ease;
+        }
+
+        #sidebar.hidden {
+            transform: translateX(-100%);
+            position: absolute;
+        }
+
+        .sidebar-header {
+            padding: 24px 20px;
+            border-bottom: 1px solid var(--border-color);
+            background: white;
+        }
+
+        .app-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .live-indicator {
+            width: 10px;
+            height: 10px;
+            background: var(--green);
+            border-radius: 50%;
+            animation: pulse-dot 2s infinite;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .sidebar-content {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .data-card {
+            background: white;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+            box-shadow: var(--shadow);
+        }
+
+        .data-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .data-value {
+            font-size: 1.1rem;
+            font-weight: 500;
+        }
+
+        .coordinates {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Courier New', monospace;
+            font-size: 0.9rem;
+            color: var(--blue);
+        }
+
+        /* Battery Progress */
+        .battery-container {
+            margin-top: 8px;
+        }
+
+        .battery-bar {
+            height: 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .battery-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease, background-color 0.3s;
+        }
+
+        .battery-text {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-top: 4px;
+        }
+
+        /* Status Badge */
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .status-inside {
+            background: rgba(40, 167, 69, 0.1);
+            color: var(--green);
+        }
+
+        .status-outside {
+            background: rgba(220, 53, 69, 0.1);
+            color: var(--red);
+        }
+
+        /* Buttons */
+        .btn {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--blue);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #0056b3;
+        }
+
+        .btn-secondary {
+            background: white;
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: #f8f9fa;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #e9ecef;
+            border-top-color: var(--blue);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 40px auto;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+
+        .loading-overlay.hidden {
+            display: none;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 16px 24px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 3000;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.error {
+            border-left: 4px solid var(--red);
+        }
+
+        .toast.success {
+            border-left: 4px solid var(--green);
+        }
+
+        /* Map */
+        #map {
+            flex: 1;
+            height: 100vh;
+            z-index: 1;
+        }
+
+        /* Pulsing Marker */
+        .pulse-marker {
+            border-radius: 50%;
+            background: var(--blue);
+            border: 3px solid white;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes pulse-ring {
+            0% {
+                box-shadow: 0 0 0 0 rgba(0, 123, 255, 0.7);
+            }
+            70% {
+                box-shadow: 0 0 0 20px rgba(0, 123, 255, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(0, 123, 255, 0);
+            }
+        }
+
+        /* Geofence Circle */
+        .geofence-circle {
+            fill: rgba(0, 123, 255, 0.1);
+            stroke: var(--blue);
+            stroke-width: 2;
+            stroke-dasharray: 8, 4;
+        }
+
+        /* Scale Bar */
+        .leaflet-control-scale {
+            margin-bottom: 10px !important;
+        }
+
+        .leaflet-control-scale-line {
+            background: rgba(255, 255, 255, 0.9);
+            border: 2px solid #333;
+            border-top: none;
+            color: #333;
+            font-weight: 600;
+        }
+
+        /* Hamburger Menu */
+        .hamburger {
+            display: none;
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 1500;
+            width: 44px;
+            height: 44px;
+            border: none;
+            background: white;
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            cursor: pointer;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+        }
+
+        .hamburger span {
+            width: 20px;
+            height: 2px;
+            background: var(--text-primary);
+            transition: all 0.3s;
+        }
+
+        .hamburger.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .hamburger.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .hamburger.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(5px, -5px);
+        }
+
+        /* Last Updated */
+        .last-updated {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-align: center;
+            margin-top: 12px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            #sidebar {
+                position: fixed;
+                left: 0;
+                top: 0;
+                bottom: 0;
+                box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+            }
+
+            #sidebar.hidden {
+                transform: translateX(-100%);
+            }
+
+            .hamburger {
+                display: flex;
+            }
+        }
+
+        /* Polyline Popup */
+        .popup-content {
+            font-size: 0.9rem;
+        }
+
+        .popup-time {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .popup-battery {
+            color: var(--text-secondary);
+        }
     </style>
 </head>
 <body>
+    <!-- Loading Overlay -->
+    <div id="loading" class="loading-overlay">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast">
+        <span id="toast-message"></span>
+    </div>
+
+    <!-- Hamburger Menu -->
+    <button class="hamburger" id="hamburger" aria-label="Toggle menu">
+        <span></span>
+        <span></span>
+        <span></span>
+    </button>
+
+    <!-- Sidebar -->
     <div id="sidebar">
-        <div class="sidebar-header">Redmi Tracker</div>
-        <div class="data-item">
-            <span class="data-label">Battery Level</span>
-            <div class="battery-level"><div id="battery-fill" class="battery-fill"></div></div>
-            <span id="battery-text" class="data-value">--%</span>
+        <div class="sidebar-header">
+            <div class="app-title">
+                <span class="live-indicator"></span>
+                Redmi Tracker
+            </div>
         </div>
-        <div class="data-item">
-            <span class="data-label">Last Seen</span>
-            <span id="last-seen" class="data-value">--</span>
-        </div>
-        <div class="data-item">
-            <span class="data-label">Coordinates</span>
-            <span id="coordinates" class="data-value">--</span>
-        </div>
-        <div class="data-item">
-            <span class="data-label">Distance Today (km)</span>
-            <span id="distance" class="data-value">--</span>
-        </div>
-        <div class="data-item">
-            <span class="data-label">Active Geofences</span>
-            <ul id="geofence-list" class="geofence-list"></ul>
+
+        <div class="sidebar-content">
+            <!-- Battery -->
+            <div class="data-card">
+                <div class="data-label">Battery Level</div>
+                <div class="battery-container">
+                    <div class="battery-bar">
+                        <div id="battery-fill" class="battery-fill" style="width: 0%"></div>
+                    </div>
+                    <div id="battery-text" class="battery-text">--%</div>
+                </div>
+            </div>
+
+            <!-- Last Seen -->
+            <div class="data-card">
+                <div class="data-label">Last Seen</div>
+                <div id="last-seen" class="data-value">--</div>
+            </div>
+
+            <!-- Coordinates -->
+            <div class="data-card">
+                <div class="data-label">Current Position</div>
+                <div id="coordinates" class="coordinates">--, --</div>
+            </div>
+
+            <!-- Distance Today -->
+            <div class="data-card">
+                <div class="data-label">Distance Traveled</div>
+                <div id="distance" class="data-value">-- km</div>
+            </div>
+
+            <!-- Geofence Status -->
+            <div class="data-card">
+                <div class="data-label">Geofence Status</div>
+                <span id="geofence-status" class="status-badge status-inside">INSIDE</span>
+            </div>
+
+            <!-- Buttons -->
+            <div class="btn-group">
+                <button class="btn btn-primary" id="refresh-btn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6M1 20v-6h6"/>
+                        <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                    </svg>
+                    Refresh
+                </button>
+                <button class="btn btn-secondary" id="zoom-btn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="M21 21l-4.35-4.35"/>
+                    </svg>
+                    Fit Path
+                </button>
+            </div>
+
+            <div class="last-updated">
+                Last updated: <span id="last-updated">Never</span>
+            </div>
         </div>
     </div>
+
+    <!-- Map -->
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // --- CONFIGURATION ---
-        // SECURITY NOTE: API_KEY is set to placeholder for security.
-        const BASE_URL = 'https://fastapi-production-9fb1.up.railway.app';
-        const API_KEY = 'YOUR_API_KEY_HERE'; 
+        // ==================== CONSTANTS ====================
+        const BASE_URL = "https://fastapi-production-9fb1.up.railway.app";
+        const API_KEY = "b73e169ce75ee24c90b1f69425b249ac4e94d01104df4018fd65ab364988b020";
+        const REFRESH_INTERVAL = 60000; // 60 seconds
+        const MAX_PATH_POINTS = 100;
+        const DEFAULT_ZOOM = 17;
 
-        const headers = { 'X-API-Key': API_KEY };
+        // ==================== STATE ====================
+        let map, latestMarker, pathLayer, geofenceLayers = [];
+        let pathPoints = [];
+        let geofences = [];
+        let updateTimer = null;
 
-        // --- MAP INITIALIZATION ---
-        const map = L.map('map').setView([-1.2921, 36.8219], 6);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '© CartoDB'
-        }).addTo(map);
+        // ==================== MAP INITIALIZATION ====================
+        function initMap() {
+            map = L.map('map', {
+                zoomControl: true,
+                attributionControl: true
+            }).setView([-1.2921, 36.8219], DEFAULT_ZOOM);
 
-        let latestMarker, polyline, geofenceLayers = [];
-
-        // --- DATA FETCHING ---
-        async function fetchData(endpoint) {
-            const response = await fetch(`${BASE_URL}${endpoint}`, { headers });
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-            return await response.json();
-        }
-
-        async function updateDashboard() {
-            try {
-                const [latest, history, geofences] = await Promise.all([
-                    fetchData('/location/latest'),
-                    fetchData('/location/history?limit=100'),
-                    fetchData('/geofence')
-                ]);
-
-                updateSidebar(latest, history, geofences);
-                updateMap(latest, history, geofences);
-            } catch (err) { console.error('Dashboard update failed:', err); }
-        }
-
-        // --- UI UPDATES ---
-        function updateSidebar(latest, history, geofences) {
-            // Battery
-            const battery = latest.battery || 0;
-            const fill = document.getElementById('battery-fill');
-            fill.style.width = battery + '%';
-            fill.style.backgroundColor = battery > 50 ? 'var(--green)' : (battery > 20 ? 'var(--yellow)' : 'var(--red)');
-            document.getElementById('battery-text').textContent = battery + '%';
-
-            // Last Seen
-            const lastSeen = new Date(latest.recorded_at);
-            const diffMin = Math.round((new Date() - lastSeen) / 60000);
-            document.getElementById('last-seen').textContent = `${diffMin} minutes ago`;
-
-            // Coordinates
-            document.getElementById('coordinates').textContent = `${latest.latitude.toFixed(5)}, ${latest.longitude.toFixed(5)}`;
-
-            // Geofences
-            const list = document.getElementById('geofence-list');
-            list.innerHTML = geofences.map(f => `<li class="geofence-item">${f.name}</li>`).join('');
-        }
-
-        function updateMap(latest, history, geofences) {
-            const pos = [latest.latitude, latest.longitude];
-            
-            // Marker
-            if (latestMarker) map.removeLayer(latestMarker);
-            latestMarker = L.marker(pos, {
-                icon: L.divIcon({ className: 'pulse-marker', iconSize: [16, 16] })
+            // CartoDB Voyager tiles - bright, shows buildings
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                maxZoom: 20,
+                subdomains: 'abcd'
             }).addTo(map);
 
-            // Polyline
-            if (polyline) map.removeLayer(polyline);
-            const path = history.map(h => [h.latitude, h.longitude]);
-            polyline = L.polyline(path, { color: '#58a6ff', weight: 3 }).addTo(map);
-
-            // Geofences
-            geofenceLayers.forEach(l => map.removeLayer(l));
-            geofenceLayers = geofences.map(f => L.circle([f.latitude, f.longitude], { radius: f.radius_meters, color: 'var(--red)' }).addTo(map));
+            // Scale bar
+            L.control.scale({
+                position: 'bottomleft',
+                metric: true,
+                imperial: false
+            }).addTo(map);
         }
 
-        // Initial Load + Auto Refresh
-        updateDashboard();
-        setInterval(updateDashboard, 60000);
+        // ==================== DATA FETCHING ====================
+        async function fetchJSON(endpoint) {
+            const response = await fetch(`${BASE_URL}${endpoint}`, {
+                method: 'GET',
+                headers: {
+                    'X-API-Key': API_KEY,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            return response.json();
+        }
+
+        async function loadDashboardData() {
+            try {
+                const [latest, history, geofenceList] = await Promise.all([
+                    fetchJSON('/location/latest'),
+                    fetchJSON('/location/history?limit=100'),
+                    fetchJSON('/geofence')
+                ]);
+
+                pathPoints = history;
+                geofences = geofenceList;
+
+                updateUI(latest);
+                updateMapLayers(latest);
+
+                hideLoading();
+                showToast('Data refreshed successfully', 'success');
+            } catch (error) {
+                console.error('Failed to load data:', error);
+                hideLoading();
+                showToast(`Failed to load data: ${error.message}`, 'error');
+            }
+        }
+
+        // ==================== UI UPDATES ====================
+        function updateUI(latest) {
+            updateBattery(latest.battery);
+            updateLastSeen(latest.recorded_at);
+            updateCoordinates(latest.latitude, latest.longitude);
+            updateDistance();
+            updateGeofenceStatus(latest.latitude, latest.longitude);
+            updateLastUpdated();
+        }
+
+        function updateBattery(battery) {
+            const fill = document.getElementById('battery-fill');
+            const text = document.getElementById('battery-text');
+            const percentage = battery || 0;
+
+            fill.style.width = `${percentage}%`;
+
+            if (percentage > 50) {
+                fill.style.backgroundColor = 'var(--green)';
+            } else if (percentage > 20) {
+                fill.style.backgroundColor = 'var(--yellow)';
+            } else {
+                fill.style.backgroundColor = 'var(--red)';
+            }
+
+            text.textContent = `${percentage}%`;
+        }
+
+        function updateLastSeen(timestamp) {
+            const lastSeen = new Date(timestamp);
+            const now = new Date();
+            const diffMs = now - lastSeen;
+            const diffMinutes = Math.round(diffMs / 60000);
+
+            let text;
+            if (diffMinutes < 1) {
+                text = 'Just now';
+            } else if (diffMinutes === 1) {
+                text = '1 minute ago';
+            } else if (diffMinutes < 60) {
+                text = `${diffMinutes} minutes ago`;
+            } else {
+                const diffHours = Math.round(diffMinutes / 60);
+                text = diffHours === 1 ? '1 hour ago' : `${diffHours} hours ago`;
+            }
+
+            document.getElementById('last-seen').textContent = text;
+        }
+
+        function updateCoordinates(lat, lon) {
+            const coords = document.getElementById('coordinates');
+            coords.textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+        }
+
+        function updateDistance() {
+            let totalDistance = 0;
+
+            for (let i = 1; i < pathPoints.length; i++) {
+                const prev = pathPoints[i - 1];
+                const curr = pathPoints[i];
+                totalDistance += haversineDistance(prev.latitude, prev.longitude, curr.latitude, curr.longitude);
+            }
+
+            const km = (totalDistance / 1000).toFixed(2);
+            document.getElementById('distance').textContent = `${km} km`;
+        }
+
+        function updateGeofenceStatus(lat, lon) {
+            const statusEl = document.getElementById('geofence-status');
+            let isInside = false;
+
+            for (const fence of geofences) {
+                const distance = haversineDistance(lat, lon, fence.latitude, fence.longitude);
+                if (distance <= fence.radius_meters) {
+                    isInside = true;
+                    break;
+                }
+            }
+
+            if (isInside) {
+                statusEl.textContent = 'INSIDE';
+                statusEl.className = 'status-badge status-inside';
+            } else {
+                statusEl.textContent = geofences.length > 0 ? 'OUTSIDE' : 'NO GEOFENCES';
+                statusEl.className = geofences.length > 0 ? 'status-badge status-outside' : 'status-badge';
+            }
+        }
+
+        function updateLastUpdated() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            document.getElementById('last-updated').textContent = timeStr;
+        }
+
+        // ==================== MAP LAYERS ====================
+        function updateMapLayers(latest) {
+            const currentPos = [latest.latitude, latest.longitude];
+
+            // Latest marker
+            if (latestMarker) {
+                map.removeLayer(latestMarker);
+            }
+            latestMarker = createPulsingMarker(currentPos).addTo(map);
+
+            // Path polyline
+            if (pathLayer) {
+                map.removeLayer(pathLayer);
+            }
+
+            const pathCoords = pathPoints.map(p => [p.latitude, p.longitude]);
+            if (pathCoords.length > 1) {
+                pathLayer = L.polyline(pathCoords, {
+                    color: 'var(--blue)',
+                    weight: 4,
+                    opacity: 0.8,
+                    smoothFactor: 1
+                }).addTo(map);
+
+                // Add popups to path points
+                pathPoints.forEach((point, index) => {
+                    const marker = L.circleMarker([point.latitude, point.longitude], {
+                        radius: 6,
+                        fillColor: 'var(--blue)',
+                        color: 'white',
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 0.8
+                    });
+
+                    const popupContent = `
+                        <div class="popup-content">
+                            <div class="popup-time">${formatTime(point.recorded_at)}</div>
+                            <div class="popup-battery">Battery: ${point.battery || 'N/A'}%</div>
+                        </div>
+                    `;
+
+                    marker.bindPopup(popupContent);
+                    marker.addTo(map);
+                });
+            }
+
+            // Geofence circles
+            geofenceLayers.forEach(layer => map.removeLayer(layer));
+            geofenceLayers = [];
+
+            geofences.forEach(fence => {
+                const circle = L.circle([fence.latitude, fence.longitude], {
+                    radius: fence.radius_meters,
+                    className: 'geofence-circle',
+                    fillOpacity: 0.1
+                }).addTo(map);
+
+                circle.bindPopup(`<strong>${fence.name}</strong><br>Radius: ${(fence.radius_meters / 1000).toFixed(2)} km`);
+                geofenceLayers.push(circle);
+            });
+
+            // Center map on latest position
+            map.setView(currentPos, DEFAULT_ZOOM);
+        }
+
+        function createPulsingMarker(position) {
+            const icon = L.divIcon({
+                className: 'pulse-marker',
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+
+            return L.marker(position, { icon });
+        }
+
+        // ==================== UTILITIES ====================
+        function haversineDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371000; // Earth's radius in meters
+            const phi1 = lat1 * Math.PI / 180;
+            const phi2 = lat2 * Math.PI / 180;
+            const dPhi = (lat2 - lat1) * Math.PI / 180;
+            const dLambda = (lon2 - lon1) * Math.PI / 180;
+
+            const a = Math.sin(dPhi / 2) ** 2 +
+                      Math.cos(phi1) * Math.cos(phi2) *
+                      Math.sin(dLambda / 2) ** 2;
+
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function showLoading() {
+            document.getElementById('loading').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').classList.add('hidden');
+        }
+
+        function showToast(message, type = 'error') {
+            const toast = document.getElementById('toast');
+            const messageEl = document.getElementById('toast-message');
+
+            messageEl.textContent = message;
+            toast.className = `toast ${type} show`;
+
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        function fitMapToPath() {
+            if (pathPoints.length === 0) {
+                showToast('No path data available', 'error');
+                return;
+            }
+
+            const bounds = pathPoints.map(p => [p.latitude, p.longitude]);
+            map.fitBounds(bounds, { padding: [50, 50] });
+        }
+
+        // ==================== EVENT LISTENERS ====================
+        function setupEventListeners() {
+            // Refresh button
+            document.getElementById('refresh-btn').addEventListener('click', () => {
+                showLoading();
+                loadDashboardData();
+            });
+
+            // Zoom to fit button
+            document.getElementById('zoom-btn').addEventListener('click', fitMapToPath);
+
+            // Hamburger menu
+            const hamburger = document.getElementById('hamburger');
+            const sidebar = document.getElementById('sidebar');
+
+            hamburger.addEventListener('click', () => {
+                hamburger.classList.toggle('active');
+                sidebar.classList.toggle('hidden');
+            });
+        }
+
+        // ==================== INITIALIZATION ====================
+        function init() {
+            initMap();
+            setupEventListeners();
+            showLoading();
+            loadDashboardData();
+
+            // Auto-refresh
+            updateTimer = setInterval(() => {
+                loadDashboardData();
+            }, REFRESH_INTERVAL);
+        }
+
+        // Start when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
     </script>
 </body>
 </html>
