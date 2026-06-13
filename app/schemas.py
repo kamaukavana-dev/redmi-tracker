@@ -8,20 +8,21 @@ All schemas follow Pydantic v2 conventions with model_config.
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class LocationCreate(BaseModel):
-    """
-    Schema for creating a new location record.
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    battery: Optional[int] = Field(None, ge=0, le=100)
+    timestamp: Optional[int] = None
 
-    Used for POST /track endpoint request body validation.
-    """
-
-    latitude: float = Field(..., ge=-90, le=90, description="GPS latitude (-90 to 90)")
-    longitude: float = Field(..., ge=-180, le=180, description="GPS longitude (-180 to 180)")
-    battery: Optional[int] = Field(None, ge=0, le=100, description="Battery percentage (0-100)")
-    timestamp: Optional[int] = Field(None, description="Unix timestamp from device (optional)")
+    @field_validator("latitude", "longitude", "battery", "timestamp", mode="before")
+    @classmethod
+    def strip_whitespace(cls, v):
+        if isinstance(v, str):
+            return v.strip()
+        return v
 
 
 class LocationResponse(BaseModel):
