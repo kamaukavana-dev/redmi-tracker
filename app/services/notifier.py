@@ -15,15 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 async def send_telegram(message: str) -> bool:
-    """
-    Send a message to Telegram chat.
-
-    Args:
-        message: HTML-formatted message text to send.
-
-    Returns:
-        True if message was sent successfully, False otherwise.
-    """
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
     payload = {
         "chat_id": settings.telegram_chat_id,
@@ -34,23 +25,11 @@ async def send_telegram(message: str) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(url, json=payload)
+            logger.info(f"Telegram response: {response.status_code} {response.text}")
             response.raise_for_status()
-            data = response.json()
-
-            if data.get("ok") is True:
-                return True
-            else:
-                logger.warning(f"Telegram API returned error: {data}")
-                return False
-
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Telegram HTTP error: {e.response.status_code} - {e.response.text}")
-        return False
-    except httpx.RequestError as e:
-        logger.error(f"Telegram request failed: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error sending Telegram message: {e}")
+            return True
+    except httpx.HTTPError as e:
+        logger.error(f"Telegram failed: {e}")
         return False
 
 
