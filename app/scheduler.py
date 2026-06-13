@@ -5,7 +5,6 @@ import asyncio
 import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-
 from app.database import SessionLocal
 from app.services import geofence as geofence_svc
 from app.services import location as location_svc
@@ -14,31 +13,32 @@ from app.services.notifier import send_telegram
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 
+
 async def check_geofences_job() -> None:
-    def _run_job():
-        db = SessionLocal()
-        try:
-            latest = location_svc.get_latest(db)
-            if not latest:
-                logger.info("No location data yet - skipping geofence check.")
-                return []
-            return geofence_svc.check_all_geofences(db, latest)
-        except Exception as e:
-            logger.exception(f"Geofence DB job failed: {e}")
-            return []
-        finally:
-            db.close()
-            
+    db = SessionLocal()
     try:
-        alerts = await asyncio.to_thread(_run_job)
+        latest = location_svc.get_latest(db)
+        if not latest:
+            logger.info("No location data yet - skipping geofence check.")
+            return
+
+        logger.info(f"Latest location: {latest.latitude}, {latest.longitude}")
+        alerts = geofence_svc.check_all_geofences(db, latest)
+        logger.info(f"Breaches found: {len(alerts)}")
+
         for alert in alerts:
+            logger.info(f"Sending alert: {alert.message[:100]}")
             success = await send_telegram(alert.message)
             if success:
-                logger.info(f"Alert sent: {alert.message[:100]}...")
+                logger.info(f"Alert sent successfully.")
             else:
                 logger.warning(f"Telegram dispatch failed for alert id={alert.id}")
+
     except Exception as e:
         logger.exception(f"Geofence job failed: {e}")
+    finally:
+        db.close()
+
 
 def start_scheduler() -> None:
     scheduler.add_job(
@@ -51,6 +51,7 @@ def start_scheduler() -> None:
     )
     scheduler.start()
     logger.info("APScheduler started.")
+
 
 def stop_scheduler() -> None:
     scheduler.shutdown(wait=True)
