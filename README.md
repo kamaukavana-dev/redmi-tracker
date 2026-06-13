@@ -237,4 +237,4 @@ MIT License - See LICENSE file for details.
 
 ---
 
-**Author:** [Your Name](https://github.com/kamaukavana-dev)
+**Author:** [Daniel Maina](https://github.com/kamaukavana-dev)
