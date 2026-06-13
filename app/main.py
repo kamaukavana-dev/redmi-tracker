@@ -178,4 +178,3 @@ app.include_router(stats.router)
 @app.get("/")
 async def serve_dashboard():
     return FileResponse("dashboard/index.html")
-# cache bust Sat Jun 13 08:55:05 PM EAT 2026
