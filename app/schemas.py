@@ -8,7 +8,7 @@ All schemas follow Pydantic v2 conventions with model_config.
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 class LocationCreate(BaseModel):
@@ -16,13 +16,6 @@ class LocationCreate(BaseModel):
     longitude: float = Field(..., ge=-180, le=180)
     battery: Optional[int] = Field(None, ge=0, le=100)
     timestamp: Optional[int] = None
-
-    @field_validator("latitude", "longitude", "battery", "timestamp", mode="before")
-    @classmethod
-    def strip_whitespace(cls, v):
-        if isinstance(v, str):
-            return v.strip()
-        return v
 
 
 class LocationResponse(BaseModel):
