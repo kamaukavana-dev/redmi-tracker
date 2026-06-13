@@ -131,6 +131,7 @@ async def build_error_response(request: Request, exc: Exception, status_code: in
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.error(f"Validation error on {request.method} {request.url.path}: {exc.errors()}")
     return await build_error_response(request, exc, 422, "Request validation failed")
 
 @app.exception_handler(SQLAlchemyError)
