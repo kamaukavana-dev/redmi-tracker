@@ -22,6 +22,12 @@ class Settings(BaseSettings):
         LOG_LEVEL: Logging level (default: INFO)
         RATE_LIMIT_PER_MINUTE: Max requests per minute per API key (default: 20)
         GEOFENCE_COOLDOWN_MINUTES: Cooldown between geofence alerts (default: 30)
+        LOW_BATTERY_THRESHOLD: Battery percentage threshold for low battery alerts (default: 15)
+        OFFLINE_THRESHOLD_MINUTES: Minutes without update to consider device offline (default: 60)
+        TELEGRAM_RETRY_COUNT: Number of retry attempts for Telegram notifications (default: 3)
+        TELEGRAM_RETRY_DELAY: Base delay between retries in seconds (default: 2)
+        DEVICE_NAME: Human-readable device name for alerts (default: "Redmi 14C")
+        GPS_STALE_THRESHOLD_MINUTES: Minutes without GPS update to consider GPS stale (default: 30)
     """
 
     model_config = SettingsConfigDict(
@@ -30,13 +36,34 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    # Required
     database_url: str
     api_key: str
     telegram_bot_token: str
     telegram_chat_id: str
+
+    # Logging
     log_level: str = "INFO"
+
+    # Rate limiting
     rate_limit_per_minute: int = 20
+
+    # Geofencing
     geofence_cooldown_minutes: int = 30
+
+    # Device monitoring
+    low_battery_threshold: int = 15
+    offline_threshold_minutes: int = 60
+    gps_stale_threshold_minutes: int = 30
+
+    # Telegram
+    telegram_retry_count: int = 3
+    telegram_retry_delay: int = 2
+
+    # Device identity
+    device_name: str = "Redmi 14C"
+
+    # Startup
     strict_startup_validation: bool = False
 
 

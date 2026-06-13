@@ -123,6 +123,8 @@ class TestCheckAllGeofences:
         assert messages == []
 
     def test_phone_outside_geofence_breach(self, db_session, sample_geofence):
+        from app.services.alerting import AlertContext
+
         location = Location(
             latitude=sample_geofence.latitude + 0.01,
             longitude=sample_geofence.longitude,
@@ -132,10 +134,11 @@ class TestCheckAllGeofences:
         db_session.commit()
         db_session.refresh(location)
 
-        messages = check_all_geofences(db_session, location)
-        assert len(messages) == 1
-        assert "Test Fence" in messages[0]
-        assert "Distance:" in messages[0]
+        alerts = check_all_geofences(db_session, location)
+        assert len(alerts) == 1
+        assert isinstance(alerts[0], AlertContext)
+        assert alerts[0].geofence_name == "Test Fence"
+        assert alerts[0].distance_meters > 0
 
     def test_cooldown_active_blocks_repeat_alert(self, db_session, sample_geofence):
         sample_geofence.last_alerted_at = datetime.utcnow() - timedelta(minutes=5)
@@ -154,6 +157,8 @@ class TestCheckAllGeofences:
         assert messages == []
 
     def test_cooldown_expired_allows_alert(self, db_session, sample_geofence):
+        from app.services.alerting import AlertContext
+
         sample_geofence.last_alerted_at = datetime.utcnow() - timedelta(minutes=60)
         db_session.commit()
 
@@ -166,8 +171,9 @@ class TestCheckAllGeofences:
         db_session.commit()
         db_session.refresh(location)
 
-        messages = check_all_geofences(db_session, location)
-        assert len(messages) == 1
+        alerts = check_all_geofences(db_session, location)
+        assert len(alerts) == 1
+        assert isinstance(alerts[0], AlertContext)
 
     def test_no_active_geofences_returns_empty(self, db_session):
         location = Location(
@@ -183,6 +189,8 @@ class TestCheckAllGeofences:
         assert messages == []
 
     def test_multiple_geofences_only_breached_return_messages(self, db_session):
+        from app.services.alerting import AlertContext
+
         fence1 = Geofence(
             name="Fence1",
             latitude=-1.2921,
@@ -210,8 +218,8 @@ class TestCheckAllGeofences:
         db_session.commit()
         db_session.refresh(location)
 
-        messages = check_all_geofences(db_session, location)
-        assert len(messages) == 0
+        alerts = check_all_geofences(db_session, location)
+        assert len(alerts) == 0
 
         location2 = Location(
             latitude=-1.2800,
@@ -222,9 +230,10 @@ class TestCheckAllGeofences:
         db_session.commit()
         db_session.refresh(location2)
 
-        messages = check_all_geofences(db_session, location2)
-        assert len(messages) == 1
-        assert "Fence1" in messages[0]
+        alerts = check_all_geofences(db_session, location2)
+        assert len(alerts) == 1
+        assert isinstance(alerts[0], AlertContext)
+        assert alerts[0].geofence_name == "Fence1"
 
         db_session.query(Alert).filter(Alert.geofence_id.in_([fence1.id, fence2.id])).delete(synchronize_session=False)
         for fence in [fence1, fence2]:

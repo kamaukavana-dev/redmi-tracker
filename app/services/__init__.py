@@ -1,7 +1,7 @@
 """
 Services package for business logic.
 
-Contains location tracking, geofence monitoring, and notification services.
+Contains location tracking, geofence monitoring, alerting, and notification services.
 """
 
-__all__ = ["location", "geofence", "notifier"]
+__all__ = ["location", "geofence", "alerting", "notifier"]

@@ -37,8 +37,8 @@ class TestSchedulerGeofenceJob:
             with patch('app.scheduler.logger') as mock_logger:
                 await check_geofences_job()
                 
-                mock_logger.info.assert_called()
-                assert "No location data yet" in str(mock_logger.info.call_args)
+                mock_logger.warning.assert_called()
+                assert "No location data available" in str(mock_logger.warning.call_args)
 
     @pytest.mark.asyncio
     @patch('app.scheduler.SessionLocal', new=TestingSessionLocal)
@@ -57,7 +57,7 @@ class TestSchedulerGeofenceJob:
         db.commit()
         db.close()
 
-        with patch('app.scheduler.send_telegram', return_value=True):
+        with patch('app.scheduler.send_telegram_with_retry', return_value=True):
             with patch('app.scheduler.logger') as mock_logger:
                 await check_geofences_job()
 
@@ -68,8 +68,9 @@ class TestSchedulerGeofenceJob:
     async def test_job_handles_telegram_failure(self):
         """Job should handle Telegram failures gracefully."""
         db = TestingSessionLocal()
+        # Create location OUTSIDE the geofence to trigger a breach
         location = Location(
-            latitude=-1.2921,
+            latitude=-1.2921 + 0.01,  # Outside the 500m radius
             longitude=36.8219,
             battery=85,
             recorded_at=datetime.utcnow(),
@@ -80,11 +81,12 @@ class TestSchedulerGeofenceJob:
         db.commit()
         db.close()
 
-        with patch('app.scheduler.send_telegram', return_value=False):
+        with patch('app.scheduler.send_telegram_with_retry', return_value=False):
             with patch('app.scheduler.logger') as mock_logger:
                 await check_geofences_job()
 
-                mock_logger.warning.assert_called()
+                # Should log error for failed notification
+                assert mock_logger.error.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_job_handles_exceptions(self):
@@ -94,4 +96,4 @@ class TestSchedulerGeofenceJob:
                 await check_geofences_job()
 
                 mock_logger.exception.assert_called()
-                assert "Geofence DB job failed" in str(mock_logger.exception.call_args)
+                assert "Geofence job failed with unexpected error" in str(mock_logger.exception.call_args)
