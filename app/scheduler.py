@@ -1,7 +1,6 @@
 """
 Scheduler module for background jobs.
 """
-import asyncio
 import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -23,16 +22,16 @@ async def check_geofences_job() -> None:
             return
 
         logger.info(f"Latest location: {latest.latitude}, {latest.longitude}")
-        alerts = geofence_svc.check_all_geofences(db, latest)
-        logger.info(f"Breaches found: {len(alerts)}")
+        messages = geofence_svc.check_all_geofences(db, latest)
+        logger.info(f"Breaches found: {len(messages)}")
 
-        for alert in alerts:
-            logger.info(f"Sending alert: {alert.message[:100]}")
-            success = await send_telegram(alert.message)
+        for message in messages:
+            logger.info(f"Sending alert: {message[:100]}")
+            success = await send_telegram(message)
             if success:
-                logger.info(f"Alert sent successfully.")
+                logger.info("Alert sent successfully.")
             else:
-                logger.warning(f"Telegram dispatch failed for alert id={alert.id}")
+                logger.warning("Telegram dispatch failed.")
 
     except Exception as e:
         logger.exception(f"Geofence job failed: {e}")
