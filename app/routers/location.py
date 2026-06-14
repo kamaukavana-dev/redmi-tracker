@@ -59,7 +59,6 @@ async def get_history(
 
     page = 1 if cursor is None else (cursor // limit) + 1
 
-    page = 1 if cursor is None else (cursor // limit) + 1
     return LocationHistoryResponse(
         data=[LocationResponse.model_validate(loc) for loc in locations],
         total=total,
