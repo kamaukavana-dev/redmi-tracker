@@ -18,6 +18,7 @@ from app.schemas import IngestionResponse
 from app.security import verify_api_key
 from app.services import location as location_svc
 from app.services import geofence as geofence_svc
+from app.services import geofence_state as geofence_state_svc
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -174,20 +175,9 @@ async def track(
 
     if lat is not None and lon is not None:
         logger.info(f"Location ingested: lat={lat:.6f}, lon={lon:.6f}, battery={bat}, quality={data_quality}")
-        background_tasks.add_task(geofence_svc.check_all_geofences, db, location)
+        background_tasks.add_task(geofence_state_svc.check_all_geofences_stateful, db, location)
     else:
         logger.warning(f"Location ingested without coordinates, skipping geofence check")
-
-    return IngestionResponse(
-        status="accepted",
-        data_quality=data_quality,
-        recovered_fields=recovered_fields,
-        rejection_reason=rejection_reason
-    )
-
-    # Continue geofence pipeline if coordinates exist
-    if lat is not None and lon is not None:
-        background_tasks.add_task(geofence_svc.check_all_geofences, db, location)
 
     return IngestionResponse(
         status="accepted",
