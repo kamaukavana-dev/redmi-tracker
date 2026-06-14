@@ -4,18 +4,28 @@ Rate limiting tests.
 Tests rate limiting functionality on /track endpoint.
 """
 
+import os
+os.environ["TEST_MODE"] = "1"
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.database import Base, get_db
 from app.config import settings
+from app.models import Location, Geofence, Alert  # Import models to register with Base BEFORE create_all
 from app.routers.track import _rate_limit_store
 
-TEST_DATABASE_URL = "sqlite:///./test_rate.db"
-engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
+# Use StaticPool to ensure all connections share the same in-memory database
+TEST_DATABASE_URL = "sqlite:///:memory:"
+engine = create_engine(
+    TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -36,10 +46,6 @@ os.environ["TEST_RATE_LIMIT"] = "1"
 def override_verify_api_key(request: Request):
     return request.headers.get("X-API-Key", "test_key")
 
-client = TestClient(app)
-HEADERS = {"X-API-Key": settings.api_key}
-
-
 @pytest.fixture(autouse=True)
 def setup_db():
     app.dependency_overrides[get_db] = override_get_db
@@ -50,6 +56,10 @@ def setup_db():
     Base.metadata.drop_all(bind=engine)
     _rate_limit_store.clear()
     app.dependency_overrides.clear()
+
+
+client = TestClient(app)
+HEADERS = {"X-API-Key": settings.api_key}
 
 
 class TestRateLimiting:
@@ -75,7 +85,7 @@ class TestRateLimiting:
         assert response.status_code == 429
         assert "Retry-After" in response.headers
         assert response.headers["Retry-After"] == "60"
-        assert "Rate limit exceeded" in response.json()["detail"]
+        assert "Rate limit exceeded" in response.json()["error"]
 
     def test_rate_limit_per_api_key(self):
         """Rate limits should be per API key, not global."""
