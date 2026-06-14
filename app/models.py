@@ -58,6 +58,25 @@ class Location(Base):
     )
 
 
+class DeviceState(Base):
+    """
+    Device state tracking for geofence state machine.
+    
+    Stores the last known state for each device-geofence pair.
+    """
+    __tablename__ = "device_states"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    device_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    geofence_id: Mapped[int] = mapped_column(Integer, ForeignKey("geofences.id"), nullable=False)
+    state: Mapped[str] = mapped_column(String(20), nullable=False)  # UNKNOWN, INSIDE, OUTSIDE, OFFLINE
+    last_updated: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    __table_args__ = (
+        Index("ix_device_states_device_geofence", "device_id", "geofence_id", unique=True),
+    )
+
+
 class IngestionMetrics(Base):
     """
     Real-time counters for ingestion pipeline health.
