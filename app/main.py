@@ -79,6 +79,11 @@ async def validate_startup() -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    # Ensure tables are created for resilient ingestion
+    from app.database import Base
+    from app.models import Location, Geofence, Alert, IngestionMetrics
+    Base.metadata.create_all(bind=engine)
+    
     if not os.getenv("TEST_MODE"):
         await validate_startup()
         start_scheduler()

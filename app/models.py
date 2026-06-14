@@ -6,6 +6,7 @@ All models inherit from Base and include appropriate indexes for performance.
 """
 
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import (
     Boolean,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -26,35 +28,46 @@ class Location(Base):
     """
     Location model storing device GPS coordinates and battery level.
 
-    Each record represents a single ping from the tracked device.
-    Locations are stored chronologically and queried for history and analysis.
-
-    Attributes:
-        id: Primary key identifier.
-        latitude: GPS latitude coordinate (-90 to 90).
-        longitude: GPS longitude coordinate (-180 to 180).
-        battery: Battery percentage (0-100), nullable.
-        recorded_at: Timestamp when location was recorded by device.
-        created_at: Timestamp when record was created in database.
+    Enhanced for production-grade resilience with data quality tracking
+    and raw payload preservation.
     """
 
     __tablename__ = "locations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    latitude: Mapped[float] = mapped_column(Float, nullable=False)
-    longitude: Mapped[float] = mapped_column(Float, nullable=False)
-    battery: Mapped[int] = mapped_column(Integer, nullable=True)
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    battery: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
+    
+    # Resilience fields
+    data_quality: Mapped[str] = mapped_column(String(20), default="valid") # valid, degraded, invalid
+    raw_payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    recovered_fields: Mapped[Optional[str]] = mapped_column(String(500), nullable=True) # Comma separated list
 
     __table_args__ = (
         Index("ix_locations_recorded_at_desc", text("recorded_at DESC")),
         Index("ix_locations_lat_lon", "latitude", "longitude"),
+        Index("ix_locations_quality", "data_quality"),
     )
+
+
+class IngestionMetrics(Base):
+    """
+    Real-time counters for ingestion pipeline health.
+    """
+    __tablename__ = "ingestion_metrics"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    metric_name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    count: Mapped[int] = mapped_column(Integer, default=0)
+
 
 
 class Geofence(Base):
