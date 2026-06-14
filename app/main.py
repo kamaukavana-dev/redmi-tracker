@@ -21,7 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
 from app.database import engine, get_db, SessionLocal
-from app.routers import track, location, geofence, stats
+from app.routers import track, location, geofence, stats, analytics
 from app.scheduler import start_scheduler, stop_scheduler
 from app.services.notifier import validate_telegram_token
 from app.schemas import ErrorResponse, HealthResponse
@@ -199,6 +199,7 @@ app.include_router(track.router)
 app.include_router(location.router)
 app.include_router(geofence.router)
 app.include_router(stats.router)
+app.include_router(analytics.router)
 
 @app.get("/")
 async def serve_dashboard():
