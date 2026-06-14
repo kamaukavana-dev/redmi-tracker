@@ -363,7 +363,7 @@ The Redmi Tracker platform has been transformed into a production-grade location
 | Analytics | 19 | ✅ All pass |
 | Geofence State Machine | 11 | ✅ All pass |
 | Failure Injection | 22 | ✅ All pass |
-| **TOTAL** | **211** | **✅ 100% PASSING** |
+| **TOTAL** | **211** | **✅ 81% coverage, 100% pass rate** |
 
 ### 8.2 Test Execution Time
 ```
