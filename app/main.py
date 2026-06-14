@@ -3,11 +3,12 @@ Redmi Tracker FastAPI Application.
 """
 
 import logging
+import os
 import sys
 import uuid
 import asyncio
 from datetime import datetime
-from typing import AsyncGenerator, Callable
+from typing import AsyncGenerator, Callable, Optional
 from contextlib import asynccontextmanager
 
 import httpx
@@ -78,12 +79,16 @@ async def validate_startup() -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    await validate_startup()
-    start_scheduler()
-    logger.info("Scheduler started.")
+    if not os.getenv("TEST_MODE"):
+        await validate_startup()
+        start_scheduler()
+        logger.info("Scheduler started.")
+    else:
+        logger.info("Running in test mode - scheduler disabled.")
     logger.info("Application ready.")
     yield
-    stop_scheduler()
+    if not os.getenv("TEST_MODE"):
+        stop_scheduler()
     logger.info("Application shut down.")
 
 app = FastAPI(
@@ -118,7 +123,7 @@ async def request_logging_middleware(request: Request, call_next: Callable) -> R
     response.headers["X-Request-ID"] = request_id
     return response
 
-async def build_error_response(request: Request, exc: Exception, status_code: int, message: str) -> JSONResponse:
+async def build_error_response(request: Request, exc: Exception, status_code: int, message: str, headers: Optional[dict] = None) -> JSONResponse:
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
     err_resp = ErrorResponse(
         error=message,
@@ -127,7 +132,11 @@ async def build_error_response(request: Request, exc: Exception, status_code: in
         request_id=request_id,
         timestamp=datetime.utcnow(),
     )
-    return JSONResponse(status_code=status_code, content=err_resp.model_dump(mode="json"))
+    return JSONResponse(
+        status_code=status_code,
+        content=err_resp.model_dump(mode="json"),
+        headers=headers
+    )
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -136,11 +145,22 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(SQLAlchemyError)
 async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
+    logger.exception(f"Database error: {exc}")
     return await build_error_response(request, exc, 500, "Database operation failed")
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    return await build_error_response(request, exc, exc.status_code, exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail,
+            "code": exc.status_code,
+            "path": request.url.path,
+            "request_id": getattr(request.state, "request_id", str(uuid.uuid4())),
+            "timestamp": datetime.utcnow().isoformat(),
+        },
+        headers=exc.headers,
+    )
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
