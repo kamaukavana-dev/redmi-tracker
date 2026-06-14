@@ -70,14 +70,14 @@ class TestRateLimiting:
         for i in range(15):
             payload = {"latitude": -1.2921 + i * 0.0001, "longitude": 36.8219, "battery": 85}
             response = client.post("/track", json=payload, headers=HEADERS)
-            assert response.status_code == 201
+            assert response.status_code == 202
 
     def test_rate_limit_blocks_over_limit_requests(self):
         """Requests over the limit should return 429."""
         for i in range(20):
             payload = {"latitude": -1.2921 + i * 0.0001, "longitude": 36.8219, "battery": 85}
             response = client.post("/track", json=payload, headers=HEADERS)
-            assert response.status_code == 201
+            assert response.status_code == 202
 
         payload = {"latitude": -1.2921, "longitude": 36.8219, "battery": 85}
         response = client.post("/track", json=payload, headers=HEADERS)
@@ -102,7 +102,7 @@ class TestRateLimiting:
         response2 = client.post("/track", json=payload, headers=headers2)
 
         assert response1.status_code == 429
-        assert response2.status_code == 201
+        assert response2.status_code == 202
 
     def test_rate_limit_resets_after_window(self):
         """Rate limit should reset after time window passes."""
