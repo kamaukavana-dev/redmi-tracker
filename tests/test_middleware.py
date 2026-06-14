@@ -67,7 +67,7 @@ class TestRequestLoggingMiddleware:
         """Authenticated requests should succeed."""
         payload = {"latitude": -1.2921, "longitude": 36.8219, "battery": 85}
         response = client.post("/track", json=payload, headers=HEADERS)
-        assert response.status_code == 201
+        assert response.status_code == 202
 
     def test_unauthenticated_request_fails(self):
         """Unauthenticated requests should fail with 403."""

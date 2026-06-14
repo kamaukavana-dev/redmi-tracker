@@ -12,16 +12,26 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class LocationCreate(BaseModel):
-    latitude: float = Field(..., ge=-90, le=90)
-    longitude: float = Field(..., ge=-180, le=180)
+    latitude: Optional[float] = Field(None, ge=-90, le=90)
+    longitude: Optional[float] = Field(None, ge=-180, le=180)
     battery: Optional[int] = Field(None, ge=0, le=100)
     timestamp: Optional[int] = None
 
     @field_validator("latitude", "longitude", "battery", "timestamp", mode="before")
     @classmethod
-    def strip_whitespace(cls, v):
+    def parseFlexibleValues(cls, v):
+        if v is None or v == "":
+            return None
         if isinstance(v, str):
-            return v.strip()
+            v = v.strip()
+            if v == "":
+                return None
+            try:
+                return float(v)
+            except ValueError:
+                return None
+        if isinstance(v, (int, float)):
+            return float(v)
         return v
 
 

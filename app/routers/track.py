@@ -9,7 +9,7 @@ Ensures zero data loss through a resilient ingestion pipeline.
 from fastapi import APIRouter, Depends, Security, Request, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 import json
 import logging
 
@@ -65,11 +65,11 @@ async def track(
     """
     Ingest a new location with ZERO DATA LOSS guarantee.
     Never returns 422 for tracking input.
+    Handles MacroDroid-style payloads with empty strings and null values.
     """
     check_rate_limit(api_key)
     location_svc.increment_metric(db, "track_total_received")
 
-    # Stage 1: Raw intake
     raw_body = await request.body()
     raw_payload_str = raw_body.decode("utf-8", errors="replace")
     
@@ -77,36 +77,48 @@ async def track(
     rejection_reason = None
     recovered_fields = []
     
-    parsed_json = {}
+    parsed_json: Dict[str, Any] = {}
     try:
         parsed_json = json.loads(raw_body)
-    except json.JSONDecodeError as e:
+        if not isinstance(parsed_json, dict):
+            raise ValueError("Payload must be a JSON object")
+    except (json.JSONDecodeError, ValueError) as e:
         data_quality = "invalid"
         rejection_reason = f"JSON parse error: {str(e)}"
         location_svc.increment_metric(db, "track_failed_parse")
-        # Continue with empty parsed_json to preserve record
+        logger.warning(f"Failed to parse payload: {raw_payload_str[:200]}")
+        parsed_json = {}
 
-    # Stage 2: Sanitization layer
-    def sanitize_float(val, field_name):
+    def sanitize_float(val, field_name: str) -> Optional[float]:
+        """Convert value to float, handling strings, empty values, and null."""
         if val is None or val == "":
             return None
         try:
             if isinstance(val, (int, float)):
-                return float(val)
-            # Handle string numbers
-            f_val = float(str(val).strip())
+                f_val = float(val)
+                if field_name in ["latitude", "longitude"]:
+                    recovered_fields.append(field_name)
+                return f_val
+            str_val = str(val).strip()
+            if str_val == "":
+                return None
+            f_val = float(str_val)
             recovered_fields.append(field_name)
             return f_val
         except (ValueError, TypeError):
             return None
 
-    def sanitize_int(val, field_name):
+    def sanitize_int(val, field_name: str) -> Optional[int]:
+        """Convert value to int, handling strings, empty values, and null."""
         if val is None or val == "":
             return None
         try:
             if isinstance(val, int):
                 return val
-            i_val = int(float(str(val).strip()))
+            str_val = str(val).strip()
+            if str_val == "":
+                return None
+            i_val = int(float(str_val))
             recovered_fields.append(field_name)
             return i_val
         except (ValueError, TypeError):
@@ -116,28 +128,31 @@ async def track(
     lon = sanitize_float(parsed_json.get("longitude"), "longitude")
     bat = sanitize_int(parsed_json.get("battery"), "battery")
 
-    # Stage 3: Normalization layer
     if lat is None or lon is None:
         if data_quality == "valid":
             data_quality = "degraded"
             rejection_reason = "Missing or invalid coordinates"
+        logger.warning(f"Missing coordinates: lat={lat}, lon={lon}")
     
-    # Range checks
     if lat is not None and (lat < -90 or lat > 90):
         lat = None
-        if data_quality == "valid": data_quality = "degraded"
-        rejection_reason = "Latitude out of range"
+        if data_quality == "valid":
+            data_quality = "degraded"
+        rejection_reason = "Latitude out of range [-90, 90]"
+        logger.warning(f"Latitude out of range: {lat}")
     
     if lon is not None and (lon < -180 or lon > 180):
         lon = None
-        if data_quality == "valid": data_quality = "degraded"
-        rejection_reason = "Longitude out of range"
+        if data_quality == "valid":
+            data_quality = "degraded"
+        rejection_reason = "Longitude out of range [-180, 180]"
+        logger.warning(f"Longitude out of range: {lon}")
 
     if bat is not None and (bat < 0 or bat > 100):
-        bat = -1
+        bat = None
         recovered_fields.append("battery_out_of_range")
+        logger.warning(f"Battery out of range: {bat}")
 
-    # Record metrics
     if data_quality == "valid":
         location_svc.increment_metric(db, "track_valid")
     elif data_quality == "degraded":
@@ -146,7 +161,6 @@ async def track(
     if recovered_fields:
         location_svc.increment_metric(db, "track_invalid_recovered")
 
-    # Store in database
     location = location_svc.ingest_location(
         db,
         latitude=lat,
@@ -156,6 +170,19 @@ async def track(
         raw_payload=raw_payload_str,
         rejection_reason=rejection_reason,
         recovered_fields=",".join(recovered_fields) if recovered_fields else None
+    )
+
+    if lat is not None and lon is not None:
+        logger.info(f"Location ingested: lat={lat:.6f}, lon={lon:.6f}, battery={bat}, quality={data_quality}")
+        background_tasks.add_task(geofence_svc.check_all_geofences, db, location)
+    else:
+        logger.warning(f"Location ingested without coordinates, skipping geofence check")
+
+    return IngestionResponse(
+        status="accepted",
+        data_quality=data_quality,
+        recovered_fields=recovered_fields,
+        rejection_reason=rejection_reason
     )
 
     # Continue geofence pipeline if coordinates exist

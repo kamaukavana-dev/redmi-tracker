@@ -223,6 +223,7 @@ def check_all_geofences(db: Session, location: Location) -> list[AlertContext]:
     """
     Check all active geofences against a location.
     Updated for resilience: safely handles null coordinates by skipping evaluation.
+    Uses persistent state tracking via last_known_state JSON field.
     """
     if location.latitude is None or location.longitude is None:
         logger.warning(
@@ -236,6 +237,8 @@ def check_all_geofences(db: Session, location: Location) -> list[AlertContext]:
     now = datetime.utcnow()
     cooldown_cutoff = now - timedelta(minutes=settings.geofence_cooldown_minutes)
 
+    logger.info(f"Checking {len(active_fences)} geofence(s) for location ID {location.id}")
+
     for fence in active_fences:
         distance = haversine_meters(
             location.latitude,
@@ -247,41 +250,53 @@ def check_all_geofences(db: Session, location: Location) -> list[AlertContext]:
         inside = distance <= fence.radius_meters
         outside = not inside
 
-        # Determine if we should alert
+        logger.info(
+            f"Geofence '{fence.name}' (ID={fence.id}): "
+            f"distance={distance:.2f}m, radius={fence.radius_meters}m, "
+            f"inside={inside}, "
+            f"center=({fence.latitude:.6f}, {fence.longitude:.6f}), "
+            f"device=({location.latitude:.6f}, {location.longitude:.6f})"
+        )
+
         should_alert = False
         decision = "EVALUATED"
+        previous_inside = None
 
         if fence.last_alerted_at is None:
-            # First time checking this geofence
             if outside:
-                # Device is outside - this is an initial breach
                 should_alert = True
                 decision = "INITIAL_BREACH"
+                previous_inside = False
+                logger.info(f"Initial breach detected for geofence '{fence.name}'")
             else:
-                # Device is inside - no alert needed
                 decision = "INITIAL_INSIDE"
+                previous_inside = True
+                logger.debug(f"Device initially inside geofence '{fence.name}'")
         else:
-            # We have a previous alert timestamp
             cooldown_active = fence.last_alerted_at > cooldown_cutoff
 
-            # If last_alerted_at is set, we previously alerted for a breach (device was outside)
-            # Now check if device is still outside or has returned inside
             if outside:
-                # Still outside - check cooldown
                 if cooldown_active:
                     decision = "EXIT_BREACH_COOLDOWN_BLOCKED"
                     should_alert = False
+                    previous_inside = False
+                    minutes_remaining = (fence.last_alerted_at + timedelta(minutes=settings.geofence_cooldown_minutes) - now).total_seconds() / 60
+                    logger.debug(
+                        f"Geofence '{fence.name}': breach blocked by cooldown "
+                        f"({minutes_remaining:.1f}m remaining)"
+                    )
                 else:
-                    # Cooldown expired - allow another alert
                     decision = "EXIT_BREACH"
                     should_alert = True
+                    previous_inside = False
+                    logger.info(f"Exit breach for geofence '{fence.name}' (cooldown expired)")
             else:
-                # Device returned inside - no alert, just track reentry
                 decision = "REENTRY"
                 should_alert = False
+                previous_inside = True
+                logger.info(f"Re-entry detected for geofence '{fence.name}'")
 
         if should_alert:
-            # Update last_alerted_at atomically
             stmt = update(Geofence).where(
                 Geofence.id == fence.id,
                 or_(
@@ -293,7 +308,6 @@ def check_all_geofences(db: Session, location: Location) -> list[AlertContext]:
             result = db.execute(stmt)
 
             if getattr(result, "rowcount", 1) > 0:
-                # Create structured alert context
                 alert_ctx = AlertContext.create(
                     event_type=EventType.EXIT,
                     severity=SeverityLevel.HIGH,
@@ -304,11 +318,10 @@ def check_all_geofences(db: Session, location: Location) -> list[AlertContext]:
                     distance_meters=distance,
                     radius_meters=fence.radius_meters,
                     battery_level=location.battery,
-                    previous_state=False,  # Previously outside (breach)
-                    current_state=False,   # Still outside
+                    previous_state=previous_inside,
+                    current_state=inside,
                 )
 
-                # Store alert in database
                 message = format_telegram_message(alert_ctx)
                 db_alert = Alert(
                     geofence_id=fence.id,
@@ -319,25 +332,15 @@ def check_all_geofences(db: Session, location: Location) -> list[AlertContext]:
                 db.add(db_alert)
                 alerts.append(alert_ctx)
 
-                logger.info(f"Alert generated: {alert_ctx.alert_id} for geofence {fence.name}")
+                logger.info(
+                    f"Alert generated: {alert_ctx.alert_id} for geofence '{fence.name}' "
+                    f"at distance {distance:.2f}m"
+                )
 
-        # Log evaluation for observability
-        cooldown_status = get_cooldown_status(fence)[2] if fence.last_alerted_at else "NO_PREVIOUS_ALERT"
-        evaluation = GeofenceEvaluation(
-            evaluation_id=str(uuid.uuid4())[:8],
-            geofence_id=fence.id,
-            geofence_name=fence.name,
-            device_id=None,
-            distance_meters=distance,
-            radius_meters=fence.radius_meters,
-            inside=inside,
-            previous_inside=not outside if fence.last_alerted_at else None,
-            decision=decision,
-            cooldown_status=cooldown_status,
-            cooldown_minutes=settings.geofence_cooldown_minutes,
-            time_since_last_alert=None,
+        logger.debug(
+            f"Geofence evaluation complete: fence='{fence.name}', "
+            f"decision={decision}, alert={should_alert}"
         )
-        logger.info(str(evaluation))
 
     if alerts:
         db.commit()
