@@ -117,6 +117,16 @@ class StatusResponse(BaseModel):
     message: str
 
 
+class IngestionResponse(BaseModel):
+    """
+    Response for /track endpoint ensuring zero data loss.
+    """
+    status: str = "accepted"
+    data_quality: str # valid | degraded | invalid
+    recovered_fields: list[str] = []
+    rejection_reason: Optional[str] = None
+
+
 class ErrorResponse(BaseModel):
     error: str
     code: int
@@ -140,6 +150,13 @@ class StatsResponse(BaseModel):
     geofences_active: int
     alerts_sent_24h: int
     pings_last_hour: int
+    
+    # Ingestion Resilience Metrics
+    track_total_received: int = 0
+    track_valid: int = 0
+    track_degraded: int = 0
+    track_invalid_recovered: int = 0
+    track_failed_parse: int = 0
 
 
 class HealthResponse(BaseModel):

@@ -222,19 +222,15 @@ def evaluate_geofence(
 def check_all_geofences(db: Session, location: Location) -> list[AlertContext]:
     """
     Check all active geofences against a location.
-
-    Implements complete event lifecycle tracking with state transitions:
-    - EXIT: Device left a geofence
-    - REENTRY: Device returned to a geofence
-    - ENTRY: Device entered a geofence (first detection)
-
-    Args:
-        db: Database session
-        location: Current device location
-
-    Returns:
-        List of AlertContext objects for events that should trigger notifications.
+    Updated for resilience: safely handles null coordinates by skipping evaluation.
     """
+    if location.latitude is None or location.longitude is None:
+        logger.warning(
+            f"Skipping geofence evaluation for location ID {location.id}: "
+            f"Missing coordinates (lat={location.latitude}, lon={location.longitude})"
+        )
+        return []
+
     alerts: list[AlertContext] = []
     active_fences = list_geofences(db)
     now = datetime.utcnow()
