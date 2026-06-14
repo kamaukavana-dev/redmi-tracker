@@ -16,6 +16,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.database import SessionLocal
 from app.services import geofence as geofence_svc
+from app.services import geofence_state as geofence_state_svc
 from app.services import location as location_svc
 from app.services.notifier import send_telegram_with_retry
 from app.config import settings
@@ -65,8 +66,8 @@ async def check_geofences_job() -> None:
             },
         )
 
-        # Check geofences
-        alerts = geofence_svc.check_all_geofences(db, latest)
+        # Check geofences using state machine
+        alerts = geofence_state_svc.check_all_geofences_stateful(db, latest)
 
         logger.info(f"Geofence evaluation complete: {len(alerts)} breach alert(s) generated")
 
