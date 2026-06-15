@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -101,6 +102,14 @@ app = FastAPI(
     description="Track device locations, monitor geofences, and receive Telegram alerts.",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.middleware("http")
