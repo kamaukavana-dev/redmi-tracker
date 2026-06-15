@@ -8,7 +8,7 @@ All schemas follow Pydantic v2 conventions with model_config.
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 class LocationCreate(BaseModel):
