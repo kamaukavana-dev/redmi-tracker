@@ -117,7 +117,8 @@ async def check_geofences_job() -> None:
 
         job_duration = (datetime.utcnow() - job_start).total_seconds()
         logger.info(
-            f"Geofence job completed in {job_duration:.2f}s",
+            f"Geofence job completed: location=({latest.latitude:.5f}, {latest.longitude:.5f}), "
+            f"breaches={len(alerts)}, duration={job_duration:.2f}s",
             extra={
                 "job_duration_seconds": job_duration,
                 "breach_alerts": len(alerts),
