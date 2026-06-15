@@ -103,6 +103,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next: Callable) -> Response:
     start_time = datetime.utcnow()

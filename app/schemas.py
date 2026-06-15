@@ -17,23 +17,6 @@ class LocationCreate(BaseModel):
     battery: Optional[int] = Field(None, ge=0, le=100)
     timestamp: Optional[int] = None
 
-    @field_validator("latitude", "longitude", "battery", "timestamp", mode="before")
-    @classmethod
-    def parseFlexibleValues(cls, v):
-        if v is None or v == "":
-            return None
-        if isinstance(v, str):
-            v = v.strip()
-            if v == "":
-                return None
-            try:
-                return float(v)
-            except ValueError:
-                return None
-        if isinstance(v, (int, float)):
-            return float(v)
-        return v
-
 
 class LocationResponse(BaseModel):
     """
