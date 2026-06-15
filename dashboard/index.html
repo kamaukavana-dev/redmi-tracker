@@ -482,10 +482,18 @@
     <script>
         // ==================== CONSTANTS ====================
         const BASE_URL = "https://fastapi-production-9fb1.up.railway.app";
-        const API_KEY = "b73e169ce75ee24c90b1f69425b249ac4e94d01104df4018fd65ab364988b020";
         const REFRESH_INTERVAL = 60000; // 60 seconds
         const MAX_PATH_POINTS = 100;
         const DEFAULT_ZOOM = 17;
+
+        // Retrieve API Key from sessionStorage or prompt user
+        let API_KEY = sessionStorage.getItem('tracker_api_key');
+        if (!API_KEY) {
+            API_KEY = prompt("Enter API Key:");
+            if (API_KEY) {
+                sessionStorage.setItem('tracker_api_key', API_KEY);
+            }
+        }
 
         // ==================== STATE ====================
         let map, latestMarker, pathLayer, geofenceLayers = [];

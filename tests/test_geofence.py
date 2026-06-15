@@ -291,3 +291,43 @@ class TestDeleteGeofence:
     def test_returns_none_for_non_existent_id(self, db_session):
         result = delete_geofence(db_session, 9999)
         assert result is None
+def test_create_geofence_invalid_lat():
+    with pytest.raises(ValueError, match="Latitude 100 out of range"):
+        create_geofence(None, {"name": "test", "latitude": 100, "longitude": 0, "radius_meters": 100})
+
+def test_create_geofence_invalid_lon():
+    with pytest.raises(ValueError, match="Longitude 200 out of range"):
+        create_geofence(None, {"name": "test", "latitude": 0, "longitude": 200, "radius_meters": 100})
+
+def test_create_geofence_invalid_radius():
+    with pytest.raises(ValueError, match="Radius must be positive"):
+        create_geofence(None, {"name": "test", "latitude": 0, "longitude": 0, "radius_meters": -10})
+
+def test_check_all_geofences_null_coords(db_session):
+    location = Location(latitude=None, longitude=None)
+    alerts = check_all_geofences(db_session, location)
+    assert alerts == []
+
+def test_evaluate_geofence_exit_breach(db_session, sample_geofence):
+    location = Location(latitude=-1.2921, longitude=36.8219, recorded_at=datetime.utcnow())
+
+def test_evaluate_geofence_exit_breach_fixed(db_session, sample_geofence):
+    # Location 1000m away
+    location = Location(latitude=-1.3000, longitude=36.8219, recorded_at=datetime.utcnow())
+    from app.services.geofence import evaluate_geofence
+    # Previous inside, now outside
+    eval = evaluate_geofence(db_session, sample_geofence, location, previous_inside=True)
+    assert eval.decision == "EXIT_BREACH"
+
+def test_evaluate_geofence_reentry(db_session, sample_geofence):
+    location = Location(latitude=-1.2921, longitude=36.8219, recorded_at=datetime.utcnow())
+    from app.services.geofence import evaluate_geofence
+    # Previous outside, now inside
+    eval = evaluate_geofence(db_session, sample_geofence, location, previous_inside=False)
+    assert eval.decision == "REENTRY"
+
+def test_check_all_geofences_logging_and_alerting(db_session, sample_geofence):
+    # Setup outside location
+    location = Location(latitude=0.0, longitude=0.0, recorded_at=datetime.utcnow())
+    check_all_geofences(db_session, location)
+    assert db_session.query(Alert).filter_by(geofence_id=sample_geofence.id).count() == 1
