@@ -27,6 +27,7 @@ from app.config import settings
 from app.models import Geofence, Alert, Location
 from app.services.alerting import AlertContext, EventType, SeverityLevel
 from app.services.geofence import haversine_meters, format_telegram_message
+from app.utils.timeutils import now_utc, as_aware
 
 logger = logging.getLogger(__name__)
 
@@ -97,12 +98,12 @@ def evaluate_geofence_state(
     Returns:
         Tuple of (current_state, transition, should_alert)
     """
-    now = datetime.utcnow()
+    now = now_utc()
 
     if location.latitude is None or location.longitude is None:
         return GeofenceState.OFFLINE, StateTransition.NO_CHANGE, False
 
-    time_since_update = (now - location.recorded_at).total_seconds() / 60
+    time_since_update = (now - as_aware(location.recorded_at)).total_seconds() / 60
 
     if time_since_update > settings.offline_threshold_minutes:
         current_state = GeofenceState.OFFLINE
@@ -145,7 +146,7 @@ def evaluate_geofence_state(
             cooldown_active = False
             if last_alert_time:
                 cooldown_delta = timedelta(minutes=settings.geofence_cooldown_minutes)
-                cooldown_active = (now - last_alert_time) < cooldown_delta
+                cooldown_active = (now - as_aware(last_alert_time)) < cooldown_delta
 
             if not cooldown_active:
                 should_alert = True
@@ -218,7 +219,7 @@ def check_all_geofences_stateful(db: Session, location: Location, device_id: str
         },
     )
 
-    now = datetime.utcnow()
+    now = now_utc()
     cooldown_cutoff = now - timedelta(minutes=settings.geofence_cooldown_minutes)
 
     for fence in active_fences:
@@ -272,7 +273,7 @@ def check_all_geofences_stateful(db: Session, location: Location, device_id: str
                     Geofence.last_alerted_at.is_(None),
                     Geofence.last_alerted_at <= cooldown_cutoff,
                 ),
-            ).values(last_alerted_at=now)
+            ).values(last_alerted_at=now).execution_options(synchronize_session=False)
 
             result = db.execute(stmt)
 

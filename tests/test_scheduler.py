@@ -254,7 +254,9 @@ class TestCheckDeviceOfflineJob:
             await check_device_offline_job()
 
         mock_logger.info.assert_called()
-        assert "Device online" in str(mock_logger.info.call_args)
+        # The job now also emits a completion-summary log, so assert against
+        # all info calls rather than only the most recent one.
+        assert any("Device online" in str(call) for call in mock_logger.info.call_args_list)
 
     @pytest.mark.asyncio
     @patch('app.scheduler.SessionLocal', new=TestingSessionLocal)

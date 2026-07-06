@@ -15,6 +15,8 @@ Implements:
 import logging
 import math
 from datetime import datetime, timedelta
+
+from app.utils.timeutils import now_utc, as_aware
 from typing import Optional
 
 from sqlalchemy import func
@@ -163,7 +165,7 @@ def calculate_distance_analytics(db: Session, hours: int = 24) -> dict:
     Returns:
         Dictionary with distance metrics
     """
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = now_utc() - timedelta(hours=hours)
 
     locations = (
         db.query(Location)
@@ -277,7 +279,7 @@ def calculate_battery_analytics(db: Session, hours: int = 24) -> dict:
     Returns:
         Dictionary with battery metrics
     """
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = now_utc() - timedelta(hours=hours)
 
     locations = (
         db.query(Location)
@@ -359,7 +361,7 @@ def calculate_device_health_score(db: Session, hours: int = 24) -> dict:
     Returns:
         Dictionary with health score and breakdown
     """
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = now_utc() - timedelta(hours=hours)
 
     total_locations = (
         db.query(func.count(Location.id))
@@ -435,7 +437,7 @@ def calculate_tracking_quality_score(db: Session, hours: int = 24) -> dict:
             "data_status": "NO_DATA",
         }
 
-    minutes_since_update = (datetime.utcnow() - latest.recorded_at).total_seconds() / 60
+    minutes_since_update = (now_utc() - as_aware(latest.recorded_at)).total_seconds() / 60
 
     if minutes_since_update < 5:
         freshness_score = 100.0
@@ -498,5 +500,5 @@ def get_comprehensive_analytics(db: Session, hours: int = 24) -> dict:
         "battery": battery,
         "health": health,
         "quality": quality,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": now_utc().isoformat(),
     }

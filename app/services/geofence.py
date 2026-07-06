@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Geofence, Alert, Location
+from app.services import alert_state
 from app.services.alerting import (
     AlertContext,
     EventType,
@@ -23,6 +24,7 @@ from app.services.alerting import (
     GeofenceEvaluation,
     format_telegram_message,
 )
+from app.utils.timeutils import now_utc, as_aware
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +124,7 @@ def get_cooldown_status(geofence: Geofence) -> tuple[bool, Optional[float], str]
         return False, 0.0, "NO_PREVIOUS_ALERT"
 
     cooldown_delta = timedelta(minutes=settings.geofence_cooldown_minutes)
-    time_since_alert = datetime.utcnow() - geofence.last_alerted_at
+    time_since_alert = now_utc() - as_aware(geofence.last_alerted_at)
     remaining = cooldown_delta - time_since_alert
 
     if remaining.total_seconds() > 0:
@@ -198,7 +200,7 @@ def evaluate_geofence(
     # Calculate time since last alert
     time_since_last = None
     if geofence.last_alerted_at:
-        time_since_last = (datetime.utcnow() - geofence.last_alerted_at).total_seconds() / 60
+        time_since_last = (now_utc() - as_aware(geofence.last_alerted_at)).total_seconds() / 60
 
     evaluation = GeofenceEvaluation(
         evaluation_id=evaluation_id,
@@ -234,7 +236,7 @@ def check_all_geofences(db: Session, location: Location) -> list[AlertContext]:
 
     alerts: list[AlertContext] = []
     active_fences = list_geofences(db)
-    now = datetime.utcnow()
+    now = now_utc()
     cooldown_cutoff = now - timedelta(minutes=settings.geofence_cooldown_minutes)
 
     logger.info(f"Checking {len(active_fences)} geofence(s) for location ID {location.id}")
@@ -273,14 +275,14 @@ def check_all_geofences(db: Session, location: Location) -> list[AlertContext]:
                 previous_inside = True
                 logger.debug(f"Device initially inside geofence '{fence.name}'")
         else:
-            cooldown_active = fence.last_alerted_at > cooldown_cutoff
+            cooldown_active = as_aware(fence.last_alerted_at) > cooldown_cutoff
 
             if outside:
                 if cooldown_active:
                     decision = "EXIT_BREACH_COOLDOWN_BLOCKED"
                     should_alert = False
                     previous_inside = False
-                    minutes_remaining = (fence.last_alerted_at + timedelta(minutes=settings.geofence_cooldown_minutes) - now).total_seconds() / 60
+                    minutes_remaining = (as_aware(fence.last_alerted_at) + timedelta(minutes=settings.geofence_cooldown_minutes) - now).total_seconds() / 60
                     logger.debug(
                         f"Geofence '{fence.name}': breach blocked by cooldown "
                         f"({minutes_remaining:.1f}m remaining)"
@@ -303,7 +305,7 @@ def check_all_geofences(db: Session, location: Location) -> list[AlertContext]:
                     Geofence.last_alerted_at.is_(None),
                     Geofence.last_alerted_at <= cooldown_cutoff,
                 ),
-            ).values(last_alerted_at=now)
+            ).values(last_alerted_at=now).execution_options(synchronize_session=False)
 
             result = db.execute(stmt)
 
@@ -371,48 +373,57 @@ def check_device_health(
         List of AlertContext objects for health-related alerts.
     """
     alerts: list[AlertContext] = []
-    now = datetime.utcnow()
+    now = now_utc()
 
     if latest_location is None:
         # No location data at all - device might be offline
         # This would be handled by the scheduler checking for missing data
         return alerts
 
-    # Check battery level
-    if latest_location.battery is not None and latest_location.battery < settings.low_battery_threshold:
-        alert_ctx = AlertContext.create(
-            event_type=EventType.LOW_BATTERY,
-            severity=SeverityLevel.MEDIUM,
-            device_name=settings.device_name,
-            geofence_name=None,
-            latitude=latest_location.latitude,
-            longitude=latest_location.longitude,
-            distance_meters=0,
-            radius_meters=None,
-            battery_level=latest_location.battery,
-            previous_state=None,
-            current_state=False,
+    cooldown = settings.health_alert_cooldown_minutes
+
+    # --- Low battery: edge-triggered, independent 30-min cooldown ---
+    battery_low = (
+        latest_location.battery is not None
+        and latest_location.battery < settings.low_battery_threshold
+    )
+    if alert_state.should_send_health_alert(db, "LOW_BATTERY", battery_low, cooldown):
+        alerts.append(
+            AlertContext.create(
+                event_type=EventType.LOW_BATTERY,
+                severity=SeverityLevel.MEDIUM,
+                device_name=settings.device_name,
+                geofence_name=None,
+                latitude=latest_location.latitude,
+                longitude=latest_location.longitude,
+                distance_meters=0,
+                radius_meters=None,
+                battery_level=latest_location.battery,
+                previous_state=None,
+                current_state=False,
+            )
         )
-        alerts.append(alert_ctx)
         logger.info(f"Low battery alert: {latest_location.battery}%")
 
-    # Check for stale GPS (location recorded long ago)
-    time_since_recorded = (now - latest_location.recorded_at).total_seconds() / 60
-    if time_since_recorded > settings.gps_stale_threshold_minutes:
-        alert_ctx = AlertContext.create(
-            event_type=EventType.GPS_SIGNAL_LOST,
-            severity=SeverityLevel.MEDIUM,
-            device_name=settings.device_name,
-            geofence_name=None,
-            latitude=latest_location.latitude,
-            longitude=latest_location.longitude,
-            distance_meters=0,
-            radius_meters=None,
-            battery_level=latest_location.battery,
-            previous_state=None,
-            current_state=False,
+    # --- Stale GPS: edge-triggered, independent 30-min cooldown ---
+    time_since_recorded = (now - as_aware(latest_location.recorded_at)).total_seconds() / 60
+    gps_stale = time_since_recorded > settings.gps_stale_threshold_minutes
+    if alert_state.should_send_health_alert(db, "GPS_SIGNAL_LOST", gps_stale, cooldown):
+        alerts.append(
+            AlertContext.create(
+                event_type=EventType.GPS_SIGNAL_LOST,
+                severity=SeverityLevel.MEDIUM,
+                device_name=settings.device_name,
+                geofence_name=None,
+                latitude=latest_location.latitude,
+                longitude=latest_location.longitude,
+                distance_meters=0,
+                radius_meters=None,
+                battery_level=latest_location.battery,
+                previous_state=None,
+                current_state=False,
+            )
         )
-        alerts.append(alert_ctx)
         logger.info(f"GPS stale alert: {time_since_recorded:.0f} minutes old")
 
     return alerts
@@ -425,5 +436,5 @@ def get_active_count(db: Session) -> int:
 
 def get_alerts_24h(db: Session) -> int:
     """Return count of alerts generated in last 24 hours."""
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+    cutoff = now_utc() - timedelta(hours=24)
     return db.query(func.count(Alert.id)).filter(Alert.sent_at >= cutoff).scalar()

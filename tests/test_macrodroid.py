@@ -203,13 +203,16 @@ class TestHostilePayloads:
         assert data["status"] == "accepted"
 
     def test_non_numeric_coordinates(self):
-        """Non-numeric coordinate strings."""
+        """Non-numeric coordinate strings are rejected with 400 (panel Fix 2).
+
+        A coordinate supplied as a non-numeric string (like MacroDroid's
+        "Location Unknown") is a hard validation error, not absorbable data.
+        """
         payload = {"latitude": "abc", "longitude": "xyz", "battery": 85}
         response = client.post("/track", json=payload, headers=HEADERS)
-        assert response.status_code == 202
+        assert response.status_code == 400
         data = response.json()
-        assert data["data_quality"] == "degraded"
-        assert "Missing or invalid coordinates" in data["rejection_reason"]
+        assert "not a numeric value" in data["error"]
 
 
 class TestNo422Errors:

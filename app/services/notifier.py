@@ -18,6 +18,50 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Deduplication toggle. Kept enabled in production; the DB-backed dedup layer
+# is defensively wrapped so a missing table or DB error never blocks a send.
+DEDUP_ENABLED = True
+
+
+def _is_duplicate(message: str) -> bool:
+    """
+    Return True if this exact message was already sent within the dedup window.
+
+    Fails open: any error (missing table, DB unavailable) is treated as
+    "not a duplicate" so alerting is never blocked by the dedup layer.
+    """
+    if not DEDUP_ENABLED:
+        return False
+    try:
+        from app.database import SessionLocal
+        from app.services import alert_state
+
+        db = SessionLocal()
+        try:
+            return alert_state.is_duplicate_message(db, message)
+        finally:
+            db.close()
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Dedup check skipped ({e})")
+        return False
+
+
+def _record_sent(message: str) -> None:
+    """Record a successfully sent message for future dedup checks (fails open)."""
+    if not DEDUP_ENABLED:
+        return
+    try:
+        from app.database import SessionLocal
+        from app.services import alert_state
+
+        db = SessionLocal()
+        try:
+            alert_state.record_sent_message(db, message)
+        finally:
+            db.close()
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Dedup record skipped ({e})")
+
 
 class TelegramNotificationError(Exception):
     """Custom exception for Telegram notification failures."""
@@ -54,6 +98,11 @@ async def send_telegram_with_retry(message: str, max_retries: int = None, base_d
     """
     max_retries = max_retries or settings.telegram_retry_count
     base_delay = base_delay or settings.telegram_retry_delay
+
+    # Deduplication: suppress identical messages already sent within the window.
+    if _is_duplicate(message):
+        logger.info("Suppressed duplicate Telegram message (identical send within window)")
+        return True
 
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
     payload = {
@@ -94,6 +143,7 @@ async def send_telegram_with_retry(message: str, max_retries: int = None, base_d
                     )
 
                 logger.info("Telegram notification sent successfully")
+                _record_sent(message)
                 return True
 
         except httpx.TimeoutException as e:

@@ -190,13 +190,17 @@ class TestNoUncaughtExceptions:
         assert response.status_code == 202
 
     def test_very_long_payload_handled(self):
-        """Very long payload should be handled."""
+        """Very long non-numeric coordinate strings are rejected with 400.
+
+        Per panel Fix 2, a present-but-non-numeric coordinate string is a hard
+        validation error. The endpoint must still not crash (no 5xx).
+        """
         long_string = "x" * 100000
         payload = {"latitude": long_string, "longitude": long_string}
         response = client.post("/track", json=payload, headers=HEADERS)
-        assert response.status_code == 202
+        assert response.status_code == 400
         data = response.json()
-        assert data["data_quality"] == "degraded"
+        assert "not a numeric value" in data["error"]
 
     def test_deeply_nested_json_handled(self):
         """Deeply nested JSON should be handled."""

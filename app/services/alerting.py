@@ -9,6 +9,8 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+
+from app.utils.timeutils import now_utc
 from enum import Enum
 from typing import Optional
 
@@ -93,7 +95,7 @@ class AlertContext:
         """Factory method to create alert with generated ID and timestamp."""
         alert_id = str(uuid.uuid4())[:8]
         google_maps_url = f"https://maps.google.com/?q={latitude:.5f},{longitude:.5f}"
-        timestamp = datetime.utcnow()
+        timestamp = now_utc()
 
         return cls(
             event_type=event_type,
