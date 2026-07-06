@@ -20,6 +20,7 @@ from app.services import location as location_svc
 from app.services import geofence as geofence_svc
 from app.services import geofence_state as geofence_state_svc
 from app.config import settings
+from app.utils.timeutils import now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ def check_rate_limit(api_key: str) -> None:
     if "pytest" in sys.modules and not os.environ.get("TEST_RATE_LIMIT"):
         return
         
-    now = datetime.utcnow()
+    now = now_utc()
     window_start = now - timedelta(minutes=1)
 
     if api_key not in _rate_limit_store:
@@ -90,6 +91,11 @@ async def track(
         logger.warning(f"Failed to parse payload: {raw_payload_str[:200]}")
         parsed_json = {}
 
+    # Coordinate fields that were supplied as a non-empty, non-numeric string
+    # (e.g. MacroDroid's literal "Location Unknown"). These are rejected with a
+    # 400 rather than silently absorbed as degraded data.
+    invalid_coord_fields: list[str] = []
+
     def sanitize_float(val, field_name: str) -> Optional[float]:
         """Convert value to float, handling strings, empty values, and null."""
         if val is None or val == "":
@@ -107,6 +113,11 @@ async def track(
             recovered_fields.append(field_name)
             return f_val
         except (ValueError, TypeError):
+            # A coordinate explicitly provided as a non-numeric string is a
+            # hard validation error (e.g. "Location Unknown"). Non-string
+            # hostile types (list/dict) fall through to degraded absorption.
+            if field_name in ("latitude", "longitude") and isinstance(val, str) and val.strip():
+                invalid_coord_fields.append(field_name)
             return None
 
     def sanitize_int(val, field_name: str) -> Optional[int]:
@@ -128,6 +139,22 @@ async def track(
     lat = sanitize_float(parsed_json.get("latitude"), "latitude")
     lon = sanitize_float(parsed_json.get("longitude"), "longitude")
     bat = sanitize_int(parsed_json.get("battery"), "battery")
+
+    # Reject non-numeric coordinate strings (e.g. MacroDroid "Location Unknown")
+    # with a clear 400. Logged at WARNING — this is bad client input, not a
+    # server error, and must never enter the pipeline as usable data.
+    if invalid_coord_fields:
+        bad = {f: parsed_json.get(f) for f in invalid_coord_fields}
+        logger.warning(f"Rejected non-numeric coordinates: {bad}")
+        location_svc.increment_metric(db, "track_rejected_coordinates")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid coordinates: "
+                + ", ".join(f"{f}={parsed_json.get(f)!r}" for f in invalid_coord_fields)
+                + " is not a numeric value."
+            ),
+        )
 
     if lat is None or lon is None:
         if data_quality == "valid":

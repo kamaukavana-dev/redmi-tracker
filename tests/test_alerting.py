@@ -10,6 +10,7 @@ Tests for:
 
 import pytest
 from datetime import datetime
+from app.utils.timeutils import now_utc
 from app.services.alerting import (
     AlertContext,
     EventType,
@@ -88,7 +89,7 @@ class TestAlertContext:
 
     def test_create_sets_timestamp(self):
         """Verify timestamp is set on creation."""
-        before = datetime.utcnow()
+        before = now_utc()
         ctx = AlertContext.create(
             event_type=EventType.EXIT,
             severity=SeverityLevel.HIGH,
@@ -102,7 +103,7 @@ class TestAlertContext:
             previous_state=True,
             current_state=False,
         )
-        after = datetime.utcnow()
+        after = now_utc()
 
         assert before <= ctx.timestamp <= after
 

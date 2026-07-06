@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     offline_threshold_minutes: int = 60
     gps_stale_threshold_minutes: int = 30
 
+    # Independent cooldown for health alerts (LOW_BATTERY, GPS_SIGNAL_LOST,
+    # DEVICE_OFFLINE). Enforced to a minimum of 30 minutes in code.
+    health_alert_cooldown_minutes: int = 30
+
+    # Location is considered too stale for geofence evaluation past this age.
+    location_staleness_threshold_minutes: int = 10
+
     # Telegram
     telegram_retry_count: int = 3
     telegram_retry_delay: int = 2

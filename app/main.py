@@ -8,6 +8,7 @@ import sys
 import uuid
 import asyncio
 from datetime import datetime
+from app.utils.timeutils import now_utc
 from typing import AsyncGenerator, Callable, Optional
 from contextlib import asynccontextmanager
 
@@ -114,14 +115,14 @@ app.add_middleware(
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next: Callable) -> Response:
-    start_time = datetime.utcnow()
+    start_time = now_utc()
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     request.state.request_id = request_id
     client_ip = request.client.host if request.client else "unknown"
 
     response = await call_next(request)
 
-    end_time = datetime.utcnow()
+    end_time = now_utc()
     duration_ms = (end_time - start_time).total_seconds() * 1000
 
     log_entry = {
@@ -144,7 +145,7 @@ async def build_error_response(request: Request, exc: Exception, status_code: in
         code=status_code,
         path=request.url.path,
         request_id=request_id,
-        timestamp=datetime.utcnow(),
+        timestamp=now_utc(),
     )
     return JSONResponse(
         status_code=status_code,
@@ -171,7 +172,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
             "code": exc.status_code,
             "path": request.url.path,
             "request_id": getattr(request.state, "request_id", str(uuid.uuid4())),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": now_utc().isoformat(),
         },
         headers=exc.headers,
     )
@@ -201,7 +202,7 @@ async def health_check(db: Session = Depends(get_db)) -> HealthResponse:
         status="healthy" if all_healthy else "degraded",
         database=db_healthy,
         telegram=telegram_healthy,
-        timestamp=datetime.utcnow(),
+        timestamp=now_utc(),
     )
 
 app.include_router(track.router)

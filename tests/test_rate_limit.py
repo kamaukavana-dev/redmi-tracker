@@ -106,12 +106,14 @@ class TestRateLimiting:
 
     def test_rate_limit_resets_after_window(self):
         """Rate limit should reset after time window passes."""
-        from datetime import datetime, timedelta
+        from datetime import timedelta
+        from app.utils.timeutils import now_utc
 
         _rate_limit_store.clear()
 
         test_key = "test_key_window"
-        now = datetime.utcnow()
+        # The rate-limit store now holds timezone-aware UTC timestamps.
+        now = now_utc()
         window_start = now - timedelta(minutes=1)
 
         _rate_limit_store[test_key] = [window_start - timedelta(seconds=1)]

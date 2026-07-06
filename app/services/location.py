@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Location, IngestionMetrics
 from app.schemas import LocationCreate
+from app.utils.timeutils import now_utc
 
 
 def increment_metric(db: Session, metric_name: str) -> None:
@@ -54,7 +55,7 @@ def ingest_location(
         latitude=lat,
         longitude=lon,
         battery=bat,
-        recorded_at=datetime.utcnow(),
+        recorded_at=now_utc(),
         data_quality=data_quality,
         raw_payload=raw_payload,
         rejection_reason=rejection_reason,
@@ -123,7 +124,7 @@ def get_locations_24h(db: Session) -> list[Location]:
     Returns:
         List of Location records from last 24 hours.
     """
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+    cutoff = now_utc() - timedelta(hours=24)
     return db.query(Location).filter(Location.recorded_at >= cutoff).all()
 
 
@@ -150,7 +151,7 @@ def get_average_battery_24h(db: Session) -> Optional[float]:
     Returns:
         Average battery percentage, or None if no data available.
     """
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+    cutoff = now_utc() - timedelta(hours=24)
     result = db.query(func.avg(Location.battery)).filter(
         Location.recorded_at >= cutoff,
         Location.battery.isnot(None),
@@ -158,7 +159,7 @@ def get_average_battery_24h(db: Session) -> Optional[float]:
 
     return float(result) if result is not None else None
 def get_pings_last_hour(db: Session) -> int:
-    cutoff = datetime.utcnow() - timedelta(hours=1)
+    cutoff = now_utc() - timedelta(hours=1)
     return db.query(func.count(Location.id)).filter(Location.recorded_at >= cutoff).scalar()
 
 def get_all_metrics(db: Session) -> dict[str, int]:

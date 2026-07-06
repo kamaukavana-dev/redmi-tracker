@@ -15,11 +15,13 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.database import SessionLocal
+from app.services import alert_state
 from app.services import geofence as geofence_svc
 from app.services import geofence_state as geofence_state_svc
 from app.services import location as location_svc
 from app.services.notifier import send_telegram_with_retry
 from app.config import settings
+from app.utils.timeutils import now_utc, as_aware
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
@@ -43,7 +45,7 @@ async def check_geofences_job() -> None:
     - All decisions are explainable from logs
     """
     db = SessionLocal()
-    job_start = datetime.utcnow()
+    job_start = now_utc()
 
     try:
         logger.info("Starting geofence evaluation job")
@@ -55,19 +57,35 @@ async def check_geofences_job() -> None:
             logger.warning("No location data available - skipping geofence check")
             return
 
-        logger.info(
-            f"Evaluating geofences for location: {latest.latitude:.5f}, {latest.longitude:.5f}",
-            extra={
-                "location_id": latest.id,
-                "latitude": latest.latitude,
-                "longitude": latest.longitude,
-                "battery": latest.battery,
-                "recorded_at": latest.recorded_at.isoformat(),
-            },
-        )
+        # Stale-data guard: never evaluate geofences against a fix that is too
+        # old — it produces false breach/re-entry alerts from a frozen position.
+        location_age_min = (now_utc() - as_aware(latest.recorded_at)).total_seconds() / 60
+        location_is_stale = location_age_min > settings.location_staleness_threshold_minutes
 
-        # Check geofences using state machine
-        alerts = geofence_state_svc.check_all_geofences_stateful(db, latest)
+        if latest.latitude is not None and latest.longitude is not None:
+            logger.info(
+                f"Evaluating geofences for location: {latest.latitude:.5f}, {latest.longitude:.5f}",
+                extra={
+                    "location_id": latest.id,
+                    "latitude": latest.latitude,
+                    "longitude": latest.longitude,
+                    "battery": latest.battery,
+                    "recorded_at": latest.recorded_at.isoformat(),
+                    "location_age_minutes": round(location_age_min, 1),
+                },
+            )
+
+        # Check geofences using state machine — skipped when data is stale.
+        if location_is_stale:
+            logger.warning(
+                "Latest location is stale (%.1f min old, threshold %d) - "
+                "skipping geofence evaluation",
+                location_age_min,
+                settings.location_staleness_threshold_minutes,
+            )
+            alerts = []
+        else:
+            alerts = geofence_state_svc.check_all_geofences_stateful(db, latest)
 
         logger.info(f"Geofence evaluation complete: {len(alerts)} breach alert(s) generated")
 
@@ -115,14 +133,16 @@ async def check_geofences_job() -> None:
             else:
                 logger.error(f"Failed to send health alert {alert_ctx.alert_id} after retries")
 
-        job_duration = (datetime.utcnow() - job_start).total_seconds()
+        job_duration = (now_utc() - job_start).total_seconds()
         logger.info(
-            f"Geofence job completed: location=({latest.latitude:.5f}, {latest.longitude:.5f}), "
-            f"breaches={len(alerts)}, duration={job_duration:.2f}s",
+            f"Geofence job completed: breaches={len(alerts)}, "
+            f"health_alerts={len(health_alerts)}, stale={location_is_stale}, "
+            f"duration={job_duration:.2f}s",
             extra={
                 "job_duration_seconds": job_duration,
                 "breach_alerts": len(alerts),
                 "health_alerts": len(health_alerts),
+                "location_stale": location_is_stale,
             },
         )
 
@@ -140,9 +160,10 @@ async def check_device_offline_job() -> None:
     Sends alert if device is considered offline.
     """
     db = SessionLocal()
+    job_start = now_utc()
 
     try:
-        logger.info("Checking device offline status")
+        logger.info("Starting device offline check")
 
         latest = location_svc.get_latest(db)
 
@@ -151,17 +172,29 @@ async def check_device_offline_job() -> None:
             # Could send alert here if we want to track "never connected"
             return
 
-        time_since_update = (datetime.utcnow() - latest.recorded_at).total_seconds() / 60
+        time_since_update = (now_utc() - as_aware(latest.recorded_at)).total_seconds() / 60
+        is_offline = time_since_update > settings.offline_threshold_minutes
 
-        if time_since_update > settings.offline_threshold_minutes:
+        # Independent, edge-triggered 30-min cooldown for DEVICE_OFFLINE.
+        # should_send_health_alert also re-arms the state when the device is
+        # back online, so a single offline episode alerts at most once.
+        should_alert = alert_state.should_send_health_alert(
+            db, "DEVICE_OFFLINE", is_offline, settings.health_alert_cooldown_minutes
+        )
+
+        if is_offline:
             logger.warning(
                 f"Device offline: last seen {time_since_update:.0f} minutes ago",
                 extra={
                     "minutes_since_update": time_since_update,
                     "threshold_minutes": settings.offline_threshold_minutes,
+                    "alerting": should_alert,
                 },
             )
+        else:
+            logger.info(f"Device online: last update {time_since_update:.0f} minutes ago")
 
+        if should_alert:
             # Create offline alert
             from app.services.alerting import AlertContext, EventType, SeverityLevel
 
@@ -187,8 +220,12 @@ async def check_device_offline_job() -> None:
             else:
                 logger.error(f"Failed to send offline alert after retries")
 
-        else:
-            logger.info(f"Device online: last update {time_since_update:.0f} minutes ago")
+        job_duration = (now_utc() - job_start).total_seconds()
+        logger.info(
+            f"Device offline check completed: offline={is_offline}, "
+            f"alerted={should_alert}, duration={job_duration:.2f}s",
+            extra={"job_duration_seconds": job_duration, "device_offline": is_offline},
+        )
 
     except Exception as e:
         logger.exception(f"Device offline check failed: {e}")
