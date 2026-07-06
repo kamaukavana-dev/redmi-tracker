@@ -3,16 +3,19 @@ Redmi Tracker FastAPI Application.
 """
 
 import logging
+import os
 import sys
 import uuid
 import asyncio
 from datetime import datetime
-from typing import AsyncGenerator, Callable
+from app.utils.timeutils import now_utc
+from typing import AsyncGenerator, Callable, Optional
 from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -20,7 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
 from app.database import engine, get_db, SessionLocal
-from app.routers import track, location, geofence, stats
+from app.routers import track, location, geofence, stats, analytics
 from app.scheduler import start_scheduler, stop_scheduler
 from app.services.notifier import validate_telegram_token
 from app.schemas import ErrorResponse, HealthResponse
@@ -78,12 +81,21 @@ async def validate_startup() -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    await validate_startup()
-    start_scheduler()
-    logger.info("Scheduler started.")
+    # Ensure tables are created for resilient ingestion
+    from app.database import Base
+    from app.models import Location, Geofence, Alert, IngestionMetrics
+    Base.metadata.create_all(bind=engine)
+    
+    if not os.getenv("TEST_MODE"):
+        await validate_startup()
+        start_scheduler()
+        logger.info("Scheduler started.")
+    else:
+        logger.info("Running in test mode - scheduler disabled.")
     logger.info("Application ready.")
     yield
-    stop_scheduler()
+    if not os.getenv("TEST_MODE"):
+        stop_scheduler()
     logger.info("Application shut down.")
 
 app = FastAPI(
@@ -93,16 +105,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next: Callable) -> Response:
-    start_time = datetime.utcnow()
+    start_time = now_utc()
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     request.state.request_id = request_id
     client_ip = request.client.host if request.client else "unknown"
 
     response = await call_next(request)
 
-    end_time = datetime.utcnow()
+    end_time = now_utc()
     duration_ms = (end_time - start_time).total_seconds() * 1000
 
     log_entry = {
@@ -118,28 +138,44 @@ async def request_logging_middleware(request: Request, call_next: Callable) -> R
     response.headers["X-Request-ID"] = request_id
     return response
 
-async def build_error_response(request: Request, exc: Exception, status_code: int, message: str) -> JSONResponse:
+async def build_error_response(request: Request, exc: Exception, status_code: int, message: str, headers: Optional[dict] = None) -> JSONResponse:
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
     err_resp = ErrorResponse(
         error=message,
         code=status_code,
         path=request.url.path,
         request_id=request_id,
-        timestamp=datetime.utcnow(),
+        timestamp=now_utc(),
     )
-    return JSONResponse(status_code=status_code, content=err_resp.model_dump(mode="json"))
+    return JSONResponse(
+        status_code=status_code,
+        content=err_resp.model_dump(mode="json"),
+        headers=headers
+    )
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.error(f"Validation error on {request.method} {request.url.path}: {exc.errors()}")
     return await build_error_response(request, exc, 422, "Request validation failed")
 
 @app.exception_handler(SQLAlchemyError)
 async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
+    logger.exception(f"Database error: {exc}")
     return await build_error_response(request, exc, 500, "Database operation failed")
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    return await build_error_response(request, exc, exc.status_code, exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail,
+            "code": exc.status_code,
+            "path": request.url.path,
+            "request_id": getattr(request.state, "request_id", str(uuid.uuid4())),
+            "timestamp": now_utc().isoformat(),
+        },
+        headers=exc.headers,
+    )
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -166,13 +202,14 @@ async def health_check(db: Session = Depends(get_db)) -> HealthResponse:
         status="healthy" if all_healthy else "degraded",
         database=db_healthy,
         telegram=telegram_healthy,
-        timestamp=datetime.utcnow(),
+        timestamp=now_utc(),
     )
 
 app.include_router(track.router)
 app.include_router(location.router)
 app.include_router(geofence.router)
 app.include_router(stats.router)
+app.include_router(analytics.router)
 
 @app.get("/")
 async def serve_dashboard():

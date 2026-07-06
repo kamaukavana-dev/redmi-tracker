@@ -15,7 +15,10 @@ async def get_stats(db: Session = Depends(get_db), _: str = Security(verify_api_
     
     last_seen = latest.recorded_at if latest else None
     last_battery = latest.battery if latest else None
-    last_known_position = Position(latitude=latest.latitude, longitude=latest.longitude) if latest else None
+    
+    last_known_position = None
+    if latest and latest.latitude is not None and latest.longitude is not None:
+        last_known_position = Position(latitude=latest.latitude, longitude=latest.longitude)
 
     avg_battery_24h = location_svc.get_average_battery_24h(db)
 
@@ -29,6 +32,8 @@ async def get_stats(db: Session = Depends(get_db), _: str = Security(verify_api_
 
     geofences_active = geofence_svc.get_active_count(db)
     alerts_sent_24h = geofence_svc.get_alerts_24h(db)
+    
+    metrics = location_svc.get_all_metrics(db)
 
     return StatsResponse(
         total_pings=total_pings,
@@ -41,4 +46,9 @@ async def get_stats(db: Session = Depends(get_db), _: str = Security(verify_api_
         geofences_active=geofences_active,
         alerts_sent_24h=alerts_sent_24h,
         pings_last_hour=pings_last_hour,
+        track_total_received=metrics.get("track_total_received", 0),
+        track_valid=metrics.get("track_valid", 0),
+        track_degraded=metrics.get("track_degraded", 0),
+        track_invalid_recovered=metrics.get("track_invalid_recovered", 0),
+        track_failed_parse=metrics.get("track_failed_parse", 0),
     )

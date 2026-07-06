@@ -12,16 +12,10 @@ from pydantic import BaseModel, Field
 
 
 class LocationCreate(BaseModel):
-    """
-    Schema for creating a new location record.
-
-    Used for POST /track endpoint request body validation.
-    """
-
-    latitude: float = Field(..., ge=-90, le=90, description="GPS latitude (-90 to 90)")
-    longitude: float = Field(..., ge=-180, le=180, description="GPS longitude (-180 to 180)")
-    battery: Optional[int] = Field(None, ge=0, le=100, description="Battery percentage (0-100)")
-    timestamp: Optional[int] = Field(None, description="Unix timestamp from device (optional)")
+    latitude: Optional[float] = Field(None, ge=-90, le=90)
+    longitude: Optional[float] = Field(None, ge=-180, le=180)
+    battery: Optional[int] = Field(None, ge=0, le=100)
+    timestamp: Optional[int] = None
 
 
 class LocationResponse(BaseModel):
@@ -116,6 +110,16 @@ class StatusResponse(BaseModel):
     message: str
 
 
+class IngestionResponse(BaseModel):
+    """
+    Response for /track endpoint ensuring zero data loss.
+    """
+    status: str = "accepted"
+    data_quality: str # valid | degraded | invalid
+    recovered_fields: list[str] = []
+    rejection_reason: Optional[str] = None
+
+
 class ErrorResponse(BaseModel):
     error: str
     code: int
@@ -139,6 +143,13 @@ class StatsResponse(BaseModel):
     geofences_active: int
     alerts_sent_24h: int
     pings_last_hour: int
+    
+    # Ingestion Resilience Metrics
+    track_total_received: int = 0
+    track_valid: int = 0
+    track_degraded: int = 0
+    track_invalid_recovered: int = 0
+    track_failed_parse: int = 0
 
 
 class HealthResponse(BaseModel):

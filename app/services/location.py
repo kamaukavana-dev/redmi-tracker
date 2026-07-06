@@ -11,26 +11,55 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import Location
+from app.models import Location, IngestionMetrics
 from app.schemas import LocationCreate
+from app.utils.timeutils import now_utc
 
 
-def ingest_location(db: Session, payload: LocationCreate) -> Location:
+def increment_metric(db: Session, metric_name: str) -> None:
+    """Increment an ingestion metric counter."""
+    metric = db.query(IngestionMetrics).filter_by(metric_name=metric_name).first()
+    if not metric:
+        metric = IngestionMetrics(metric_name=metric_name, count=1)
+        db.add(metric)
+    else:
+        metric.count += 1
+    db.commit()
+
+
+def ingest_location(
+    db: Session, 
+    payload: Optional[LocationCreate] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    battery: Optional[int] = None,
+    data_quality: str = "valid",
+    raw_payload: Optional[str] = None,
+    rejection_reason: Optional[str] = None,
+    recovered_fields: Optional[str] = None
+) -> Location:
     """
     Ingest a new location record into the database.
-
-    Args:
-        db: Active SQLAlchemy session.
-        payload: Validated location data from API request.
-
-    Returns:
-        The created Location record with generated ID.
+    Updated for resilient pipeline.
     """
+    if payload:
+        lat = payload.latitude
+        lon = payload.longitude
+        bat = payload.battery
+    else:
+        lat = latitude
+        lon = longitude
+        bat = battery
+
     location = Location(
-        latitude=payload.latitude,
-        longitude=payload.longitude,
-        battery=payload.battery,
-        recorded_at=datetime.utcnow(),
+        latitude=lat,
+        longitude=lon,
+        battery=bat,
+        recorded_at=now_utc(),
+        data_quality=data_quality,
+        raw_payload=raw_payload,
+        rejection_reason=rejection_reason,
+        recovered_fields=recovered_fields
     )
     db.add(location)
     db.commit()
@@ -95,7 +124,7 @@ def get_locations_24h(db: Session) -> list[Location]:
     Returns:
         List of Location records from last 24 hours.
     """
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+    cutoff = now_utc() - timedelta(hours=24)
     return db.query(Location).filter(Location.recorded_at >= cutoff).all()
 
 
@@ -122,7 +151,7 @@ def get_average_battery_24h(db: Session) -> Optional[float]:
     Returns:
         Average battery percentage, or None if no data available.
     """
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+    cutoff = now_utc() - timedelta(hours=24)
     result = db.query(func.avg(Location.battery)).filter(
         Location.recorded_at >= cutoff,
         Location.battery.isnot(None),
@@ -130,5 +159,10 @@ def get_average_battery_24h(db: Session) -> Optional[float]:
 
     return float(result) if result is not None else None
 def get_pings_last_hour(db: Session) -> int:
-    cutoff = datetime.utcnow() - timedelta(hours=1)
+    cutoff = now_utc() - timedelta(hours=1)
     return db.query(func.count(Location.id)).filter(Location.recorded_at >= cutoff).scalar()
+
+def get_all_metrics(db: Session) -> dict[str, int]:
+    """Retrieve all ingestion metrics as a dictionary."""
+    metrics = db.query(IngestionMetrics).all()
+    return {m.metric_name: m.count for m in metrics}

@@ -6,6 +6,7 @@ All models inherit from Base and include appropriate indexes for performance.
 """
 
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import (
     Boolean,
@@ -15,46 +16,78 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.utils.timeutils import now_utc
 
 
 class Location(Base):
     """
     Location model storing device GPS coordinates and battery level.
 
-    Each record represents a single ping from the tracked device.
-    Locations are stored chronologically and queried for history and analysis.
-
-    Attributes:
-        id: Primary key identifier.
-        latitude: GPS latitude coordinate (-90 to 90).
-        longitude: GPS longitude coordinate (-180 to 180).
-        battery: Battery percentage (0-100), nullable.
-        recorded_at: Timestamp when location was recorded by device.
-        created_at: Timestamp when record was created in database.
+    Enhanced for production-grade resilience with data quality tracking
+    and raw payload preservation.
     """
 
     __tablename__ = "locations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    latitude: Mapped[float] = mapped_column(Float, nullable=False)
-    longitude: Mapped[float] = mapped_column(Float, nullable=False)
-    battery: Mapped[int] = mapped_column(Integer, nullable=True)
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    battery: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=now_utc, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=now_utc, nullable=False
     )
+    
+    # Resilience fields
+    data_quality: Mapped[str] = mapped_column(String(20), default="valid") # valid, degraded, invalid
+    raw_payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    recovered_fields: Mapped[Optional[str]] = mapped_column(String(500), nullable=True) # Comma separated list
 
     __table_args__ = (
         Index("ix_locations_recorded_at_desc", text("recorded_at DESC")),
         Index("ix_locations_lat_lon", "latitude", "longitude"),
+        Index("ix_locations_quality", "data_quality"),
     )
+
+
+class DeviceState(Base):
+    """
+    Device state tracking for geofence state machine.
+    
+    Stores the last known state for each device-geofence pair.
+    """
+    __tablename__ = "device_states"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    device_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    geofence_id: Mapped[int] = mapped_column(Integer, ForeignKey("geofences.id"), nullable=False)
+    state: Mapped[str] = mapped_column(String(20), nullable=False)  # UNKNOWN, INSIDE, OUTSIDE, OFFLINE
+    last_updated: Mapped[datetime] = mapped_column(DateTime, default=now_utc, nullable=False)
+    
+    __table_args__ = (
+        Index("ix_device_states_device_geofence", "device_id", "geofence_id", unique=True),
+    )
+
+
+class IngestionMetrics(Base):
+    """
+    Real-time counters for ingestion pipeline health.
+    """
+    __tablename__ = "ingestion_metrics"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    metric_name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    count: Mapped[int] = mapped_column(Integer, default=0)
+
 
 
 class Geofence(Base):
@@ -84,7 +117,7 @@ class Geofence(Base):
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
     radius_meters: Mapped[float] = mapped_column(Float, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
     last_alerted_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
     alerts: Mapped[list["Alert"]] = relationship("Alert", back_populates="geofence")
@@ -114,10 +147,52 @@ class Alert(Base):
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
     message: Mapped[str] = mapped_column(String(500), nullable=False)
-    sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
 
     geofence: Mapped["Geofence"] = relationship("Geofence", back_populates="alerts")
 
     __table_args__ = (
         Index("ix_alerts_geofence_id_sent_at_desc", "geofence_id", text("sent_at DESC")),
+    )
+
+
+class HealthAlertState(Base):
+    """
+    Per-alert-type cooldown and edge-trigger state for device health alerts.
+
+    One row per alert type (LOW_BATTERY, GPS_SIGNAL_LOST, DEVICE_OFFLINE).
+    ``last_alerted_at`` drives the independent cooldown; ``active`` records
+    whether the underlying condition was already firing on the previous tick
+    so alerts only fire on the transition into the bad state, not every tick.
+    """
+
+    __tablename__ = "health_alert_states"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    alert_type: Mapped[str] = mapped_column(String(40), nullable=False, unique=True, index=True)
+    last_alerted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class NotificationLog(Base):
+    """
+    Record of Telegram messages sent, used for deduplication.
+
+    Before sending any alert, the notifier checks whether an identical message
+    (by SHA-256 hash) was already sent within the dedup window and, if so,
+    suppresses the duplicate silently.
+    """
+
+    __tablename__ = "notification_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    message_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=now_utc, index=True
+    )
+
+    __table_args__ = (
+        Index("ix_notification_log_hash_sent_at", "message_hash", text("sent_at DESC")),
     )

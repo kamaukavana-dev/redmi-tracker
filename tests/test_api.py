@@ -4,19 +4,28 @@ Comprehensive API endpoint tests.
 Tests all endpoints for happy path, authentication failures, and edge cases.
 """
 
+import os
+os.environ["TEST_MODE"] = "1"
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
-from datetime import datetime, timedelta
+from sqlalchemy.pool import StaticPool
 
+# Import models to register with Base BEFORE create_all
 from app.main import app
 from app.database import Base, get_db
 from app.config import settings
 from app.models import Location, Geofence, Alert
 
-TEST_DATABASE_URL = "sqlite:///./test.db"
-engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
+# Use StaticPool to ensure all connections share the same in-memory database
+TEST_DATABASE_URL = "sqlite:///:memory:"
+engine = create_engine(
+    TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -34,10 +43,14 @@ HEADERS = {"X-API-Key": settings.api_key}
 
 @pytest.fixture(autouse=True)
 def setup_db():
+    from app.routers.track import _rate_limit_store
     app.dependency_overrides[get_db] = override_get_db
     Base.metadata.create_all(bind=engine)
+    _rate_limit_store.clear()
     yield
     Base.metadata.drop_all(bind=engine)
+    _rate_limit_store.clear()
+    app.dependency_overrides.clear()
 
 
 class TestHealthEndpoint:
@@ -53,18 +66,15 @@ class TestHealthEndpoint:
 
 
 class TestTrackEndpoint:
-    """Tests for POST /track endpoint."""
+    """Tests for POST /track endpoint with resilient ingestion."""
 
     def test_track_location_success(self):
         payload = {"latitude": -1.2921, "longitude": 36.8219, "battery": 85}
         response = client.post("/track", json=payload, headers=HEADERS)
-        assert response.status_code == 201
+        assert response.status_code == 202
         data = response.json()
-        assert data["latitude"] == -1.2921
-        assert data["longitude"] == 36.8219
-        assert data["battery"] == 85
-        assert "id" in data
-        assert "recorded_at" in data
+        assert data["status"] == "accepted"
+        assert data["data_quality"] == "valid"
 
     def test_track_requires_api_key(self):
         payload = {"latitude": -1.2921, "longitude": 36.8219, "battery": 85}
@@ -77,46 +87,65 @@ class TestTrackEndpoint:
         assert response.status_code == 403
 
     def test_track_invalid_latitude_high(self):
+        """Out of range latitude should be accepted but marked as degraded."""
         payload = {"latitude": 91.0, "longitude": 36.8219, "battery": 85}
         response = client.post("/track", json=payload, headers=HEADERS)
-        assert response.status_code == 422
+        assert response.status_code == 202
+        data = response.json()
+        assert data["data_quality"] == "degraded"
+        assert "Latitude out of range" in data["rejection_reason"]
 
     def test_track_invalid_latitude_low(self):
         payload = {"latitude": -91.0, "longitude": 36.8219, "battery": 85}
         response = client.post("/track", json=payload, headers=HEADERS)
-        assert response.status_code == 422
+        assert response.status_code == 202
+        data = response.json()
+        assert data["data_quality"] == "degraded"
 
     def test_track_invalid_longitude_high(self):
         payload = {"latitude": -1.2921, "longitude": 181.0, "battery": 85}
         response = client.post("/track", json=payload, headers=HEADERS)
-        assert response.status_code == 422
+        assert response.status_code == 202
+        data = response.json()
+        assert data["data_quality"] == "degraded"
 
     def test_track_invalid_longitude_low(self):
         payload = {"latitude": -1.2921, "longitude": -181.0, "battery": 85}
         response = client.post("/track", json=payload, headers=HEADERS)
-        assert response.status_code == 422
+        assert response.status_code == 202
+        data = response.json()
+        assert data["data_quality"] == "degraded"
 
     def test_track_invalid_battery_high(self):
+        """Out of range battery should be accepted and normalized."""
         payload = {"latitude": -1.2921, "longitude": 36.8219, "battery": 101}
         response = client.post("/track", json=payload, headers=HEADERS)
-        assert response.status_code == 422
+        assert response.status_code == 202
+        data = response.json()
+        assert data["status"] == "accepted"
 
     def test_track_invalid_battery_low(self):
         payload = {"latitude": -1.2921, "longitude": 36.8219, "battery": -1}
         response = client.post("/track", json=payload, headers=HEADERS)
-        assert response.status_code == 422
+        assert response.status_code == 202
+        data = response.json()
+        assert data["status"] == "accepted"
 
     def test_track_optional_battery(self):
         payload = {"latitude": -1.2921, "longitude": 36.8219}
         response = client.post("/track", json=payload, headers=HEADERS)
-        assert response.status_code == 201
+        assert response.status_code == 202
         data = response.json()
-        assert data["battery"] is None
+        assert data["status"] == "accepted"
 
     def test_track_missing_required_fields(self):
+        """Missing coordinates should be accepted but marked as degraded."""
         payload = {"latitude": -1.2921}
         response = client.post("/track", json=payload, headers=HEADERS)
-        assert response.status_code == 422
+        assert response.status_code == 202
+        data = response.json()
+        assert data["data_quality"] == "degraded"
+        assert "Missing or invalid coordinates" in data["rejection_reason"]
 
 
 class TestLocationLatestEndpoint:
