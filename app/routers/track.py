@@ -98,14 +98,13 @@ async def track(
 
     def sanitize_float(val, field_name: str) -> Optional[float]:
         """Convert value to float, handling strings, empty values, and null."""
-        if val is None or val == "":
+        # bool is an int subclass — true/false must not become 1.0/0.0.
+        if val is None or val == "" or isinstance(val, bool):
             return None
         try:
             if isinstance(val, (int, float)):
-                f_val = float(val)
-                if field_name in ["latitude", "longitude"]:
-                    recovered_fields.append(field_name)
-                return f_val
+                # Already numeric — nothing was recovered.
+                return float(val)
             str_val = str(val).strip()
             if str_val == "":
                 return None
@@ -122,7 +121,8 @@ async def track(
 
     def sanitize_int(val, field_name: str) -> Optional[int]:
         """Convert value to int, handling strings, empty values, and null."""
-        if val is None or val == "":
+        # bool is an int subclass — "battery": true must not become 1%.
+        if val is None or val == "" or isinstance(val, bool):
             return None
         try:
             if isinstance(val, int):
@@ -163,23 +163,23 @@ async def track(
         logger.warning(f"Missing coordinates: lat={lat}, lon={lon}")
     
     if lat is not None and (lat < -90 or lat > 90):
+        logger.warning(f"Latitude out of range: {lat}")
         lat = None
         if data_quality == "valid":
             data_quality = "degraded"
         rejection_reason = "Latitude out of range [-90, 90]"
-        logger.warning(f"Latitude out of range: {lat}")
-    
+
     if lon is not None and (lon < -180 or lon > 180):
+        logger.warning(f"Longitude out of range: {lon}")
         lon = None
         if data_quality == "valid":
             data_quality = "degraded"
         rejection_reason = "Longitude out of range [-180, 180]"
-        logger.warning(f"Longitude out of range: {lon}")
 
     if bat is not None and (bat < 0 or bat > 100):
+        logger.warning(f"Battery out of range: {bat}")
         bat = None
         recovered_fields.append("battery_out_of_range")
-        logger.warning(f"Battery out of range: {bat}")
 
     if data_quality == "valid":
         location_svc.increment_metric(db, "track_valid")

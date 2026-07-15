@@ -258,3 +258,97 @@ class TestNo422Errors:
         response = client.post("/track", json=payload, headers=HEADERS)
         assert response.status_code != 422
         assert response.status_code == 202
+
+class TestBatteryIntegrity:
+    """Regression tests for false battery readings (July 2026 audit).
+
+    Guards the invariants that keep displayed battery honest:
+    - booleans never coerce to 1%/0%
+    - out-of-range battery is stored as NULL, never clamped or kept
+    - numeric coordinates are not falsely reported as "recovered"
+    - stored battery round-trips unchanged through /location/latest
+    """
+
+    def test_boolean_battery_stored_as_null(self):
+        """"battery": true must not be stored as 1% (bool is an int subclass)."""
+        payload = {"latitude": -1.2921, "longitude": 36.8219, "battery": True}
+        response = client.post("/track", json=payload, headers=HEADERS)
+        assert response.status_code == 202
+
+        db = TestingSessionLocal()
+        try:
+            loc = db.query(Location).order_by(Location.id.desc()).first()
+            assert loc.battery is None
+        finally:
+            db.close()
+
+    def test_boolean_coordinates_not_coerced(self):
+        """"latitude": true must not become 1.0."""
+        payload = {"latitude": True, "longitude": False, "battery": 50}
+        response = client.post("/track", json=payload, headers=HEADERS)
+        assert response.status_code == 202
+        assert response.json()["data_quality"] == "degraded"
+
+        db = TestingSessionLocal()
+        try:
+            loc = db.query(Location).order_by(Location.id.desc()).first()
+            assert loc.latitude is None
+            assert loc.longitude is None
+            assert loc.battery == 50
+        finally:
+            db.close()
+
+    def test_out_of_range_battery_stored_as_null(self):
+        """Battery 150% must be stored as NULL, not 150 or a clamped value."""
+        payload = {"latitude": -1.2921, "longitude": 36.8219, "battery": 150}
+        response = client.post("/track", json=payload, headers=HEADERS)
+        assert response.status_code == 202
+        assert "battery_out_of_range" in response.json()["recovered_fields"]
+
+        db = TestingSessionLocal()
+        try:
+            loc = db.query(Location).order_by(Location.id.desc()).first()
+            assert loc.battery is None
+        finally:
+            db.close()
+
+    def test_numeric_coordinates_not_marked_recovered(self):
+        """Already-numeric lat/lon must not inflate recovered_fields."""
+        payload = {"latitude": -1.2921, "longitude": 36.8219, "battery": 85}
+        response = client.post("/track", json=payload, headers=HEADERS)
+        assert response.status_code == 202
+        assert response.json()["recovered_fields"] == []
+
+    def test_battery_round_trips_through_latest(self):
+        """The exact battery ingested is the one /location/latest returns."""
+        payload = {"latitude": -1.2921, "longitude": 36.8219, "battery": 73}
+        response = client.post("/track", json=payload, headers=HEADERS)
+        assert response.status_code == 202
+
+        response = client.get("/location/latest", headers=HEADERS)
+        assert response.status_code == 200
+        assert response.json()["battery"] == 73
+
+    def test_latest_serializes_degraded_row_without_500(self):
+        """A degraded row (null coords) must not crash /location/latest."""
+        payload = {"battery": 42}
+        response = client.post("/track", json=payload, headers=HEADERS)
+        assert response.status_code == 202
+
+        response = client.get("/location/latest", headers=HEADERS)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["battery"] == 42
+        assert data["latitude"] is None
+        assert data["longitude"] is None
+
+    def test_latest_timestamp_is_timezone_aware(self):
+        """recorded_at must carry a UTC offset so browsers don't parse it as local time."""
+        payload = {"latitude": -1.2921, "longitude": 36.8219, "battery": 85}
+        response = client.post("/track", json=payload, headers=HEADERS)
+        assert response.status_code == 202
+
+        response = client.get("/location/latest", headers=HEADERS)
+        assert response.status_code == 200
+        recorded_at = response.json()["recorded_at"]
+        assert recorded_at.endswith("Z") or "+" in recorded_at

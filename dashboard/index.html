@@ -548,7 +548,13 @@
                     fetchJSON('/geofence')
                 ]);
 
-                pathPoints = history;
+                // /location/history returns {data: [...], total, ...} — not a bare
+                // array. Using the object directly made pathPoints.length undefined,
+                // so distance was always 0.00 km and the map path never rendered.
+                // Degraded rows may carry null coordinates; drop them from the path.
+                pathPoints = (history.data || []).filter(
+                    p => p.latitude != null && p.longitude != null
+                );
                 geofences = geofenceList;
 
                 updateUI(latest);
@@ -576,7 +582,16 @@
         function updateBattery(battery) {
             const fill = document.getElementById('battery-fill');
             const text = document.getElementById('battery-text');
-            const percentage = battery || 0;
+
+            // A missing reading is unknown — never coerce it to 0%.
+            if (typeof battery !== 'number' || !Number.isFinite(battery)) {
+                fill.style.width = '0%';
+                fill.style.backgroundColor = 'var(--gray, #9ca3af)';
+                text.textContent = '--%';
+                return;
+            }
+
+            const percentage = Math.min(100, Math.max(0, battery));
 
             fill.style.width = `${percentage}%`;
 
@@ -699,7 +714,7 @@
                     const popupContent = `
                         <div class="popup-content">
                             <div class="popup-time">${formatTime(point.recorded_at)}</div>
-                            <div class="popup-battery">Battery: ${point.battery || 'N/A'}%</div>
+                            <div class="popup-battery">Battery: ${point.battery != null ? point.battery + '%' : 'N/A'}</div>
                         </div>
                     `;
 

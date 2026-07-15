@@ -8,7 +8,9 @@ All schemas follow Pydantic v2 conventions with model_config.
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.utils.timeutils import as_aware
 
 
 class LocationCreate(BaseModel):
@@ -23,16 +25,27 @@ class LocationResponse(BaseModel):
     Schema for location response data.
 
     Used for GET endpoints returning location information.
+
+    Coordinates are optional because degraded ingests (missing/invalid GPS)
+    are stored with null coordinates; serializing them must not 500.
+    Timestamps are coerced to timezone-aware UTC so JSON carries an explicit
+    offset — naive timestamps get parsed as local time by browsers, skewing
+    "last seen" by the viewer's UTC offset.
     """
 
     id: int
-    latitude: float
-    longitude: float
+    latitude: Optional[float]
+    longitude: Optional[float]
     battery: Optional[int]
     recorded_at: datetime
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("recorded_at", "created_at")
+    @classmethod
+    def _utc(cls, v: datetime) -> datetime:
+        return as_aware(v)
 
 
 class LocationHistoryResponse(BaseModel):
