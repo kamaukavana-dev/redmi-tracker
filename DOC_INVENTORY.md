@@ -15,7 +15,7 @@
 | `*.md` (All others) | Audit/Certification/Report | Redundant / Outdated |
 
 ## 2. Redundancy/Conflict Summary
-- The repository is flooded with AI-generated audit reports, certification records, and coverage documentation that serve no ongoing purpose.
+- The repository is flooded with redundant audit reports, certification records, and coverage documentation that serve no ongoing purpose.
 - Multiple reports (e.g., `COVERAGE_REPORT.md`, `INDEPENDENT_COVERAGE_AUDIT.md`, `CRITICAL_PATH_COVERAGE_REPORT.md`) provide conflicting or historical snapshots of coverage.
 - All certification files (e.g., `FINAL_RELEASE_GATE_REPORT.md`, `FINAL_INDEPENDENT_CERTIFICATION.md`) are effectively historical artifacts and should not be treated as current "source of truth."
 

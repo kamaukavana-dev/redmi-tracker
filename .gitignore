@@ -7,3 +7,6 @@ test.db
 .pytest_cache/
 dist/
 *.egg-info/
+
+# JetBrains IDE config
+.idea/

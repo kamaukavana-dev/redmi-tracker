@@ -30,7 +30,7 @@
 
 ## 3. Archival Summary
 - **Archived Documents Count:** 31 files moved to `docs/archive/`.
-- **Redundancy Removed:** All AI-generated audit reports, certification records, and conflicting coverage reports have been archived to eliminate confusion.
+- **Redundancy Removed:** All redundant audit reports, certification records, and conflicting coverage reports have been archived to eliminate confusion.
 
 ## 4. Truth Enforcement Confirmation
 - Single source of truth enforced.
